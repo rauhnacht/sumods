@@ -13,7 +13,7 @@ data/           terms.json, one file per term, plus <term>-info.json description
 scraper/scrape.py    BannerWeb schedule scraper
 scraper/details.py   syllabus + course-catalog descriptions, prerequisites
 scraper/exams.py     final exam schedule
-scraper/calendar.py  academic calendar: term dates, registration and add/drop days, days off
+scraper/academic_calendar.py  academic calendar: term dates, registration and add/drop days, days off
 scraper/programs.py  degree requirements per programme and entry term
 tools/build_catalog.py  one file listing every course across the archive
 tools/import_suchedule.py  seeds schedule data from SUchedule's public snapshot
@@ -220,7 +220,7 @@ in:
   Put its URL in `config.js` (`seatsEndpoint`). Opening a course panel then shows live seats
   and a Refresh button; without it the app shows the scraped file with its timestamp.
 
-### Term dates: `scraper/calendar.py`
+### Term dates: `scraper/academic_calendar.py`
 
 Parses the academic calendar (`sabanciuniv.edu/tr/akademik-takvim?b=2026&c=16&d=tr`) into
 `data/<term>-calendar.json`: when classes start and end, when finals run, and every official
