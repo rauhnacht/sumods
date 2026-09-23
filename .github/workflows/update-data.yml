@@ -27,15 +27,15 @@ jobs:
       - run: pip install -r scraper/requirements.txt
 
       - name: Scrape BannerWeb
-        run: python scraper/scrape.py --latest 3
+        run: python -u scraper/scrape.py --latest 3
 
       - name: Final exam schedule (skipped if not published yet)
         continue-on-error: true
-        run: python scraper/exams.py
+        run: python -u scraper/exams.py
 
       - name: Academic calendar
         continue-on-error: true
-        run: python scraper/academic_calendar.py
+        run: python -u scraper/academic_calendar.py
 
       - name: Course catalogue across the archive
         run: python tools/build_catalog.py

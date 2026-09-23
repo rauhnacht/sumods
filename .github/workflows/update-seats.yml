@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r scraper/requirements.txt
-      - run: python scraper/seats.py --auto
+      - run: python -u scraper/seats.py --auto
       - name: Commit
         run: |
           if [ -n "$(git status --porcelain data)" ]; then

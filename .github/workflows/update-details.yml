@@ -27,12 +27,12 @@ jobs:
       - run: pip install -r scraper/requirements.txt
       - name: Fetch syllabus and catalog details
         run: |
-          python scraper/details.py --delay 1.0 \
+          python -u scraper/details.py --delay 1.0 \
             ${{ inputs.term && format('--term {0}', inputs.term) || '' }} \
             ${{ inputs.refresh && '--refresh' || '' }}
       - name: Degree requirements (every programme, entry terms since 2019)
         continue-on-error: true
-        run: python scraper/programs.py
+        run: python -u scraper/programs.py
 
       - name: Commit
         run: |
