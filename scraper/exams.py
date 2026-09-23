@@ -223,8 +223,21 @@ def main(argv=None) -> int:
     for exam in exams[:5]:
         print("   ", exam)
     if not exams:
-        print("nothing recognised — save the page with --dump and inspect it with --html", file=sys.stderr)
-        return 1
+        # BannerWeb keeps this page live all year but only fills it in a few weeks before
+        # finals, so an empty page is the normal state for most of the term, not a failure.
+        # Only treat it as suspicious once the exam period (from the academic calendar, if
+        # we have it) has actually started and there's still nothing.
+        exams_start = None
+        cal_path = data_dir / f"{term}-calendar.json"
+        if cal_path.exists():
+            exams_start = json.loads(cal_path.read_text(encoding="utf-8")).get("examsStart")
+        today = dt.date.today().isoformat()
+        if exams_start and today >= exams_start:
+            print(f"nothing recognised, but finals should be running since {exams_start} — "
+                  f"save the page with --dump and inspect it with --html", file=sys.stderr)
+            return 1
+        print(f"nothing published yet{f' (finals start {exams_start})' if exams_start else ''} — this is normal until closer to exam period", file=sys.stderr)
+        return 0
     if args.print:
         return 0
 
