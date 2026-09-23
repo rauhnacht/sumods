@@ -2,20 +2,28 @@
  "schema": 1,
  "terms": [
   {
+   "code": "202602",
+   "name": "Spring 2026-2027",
+   "updated": "2026-09-23T21:09:45Z",
+   "courses": 516,
+   "sections": 1439,
+   "hash": "712d28bcfbf4"
+  },
+  {
    "code": "202601",
    "name": "Fall 2026-2027",
-   "updated": "2026-09-23T11:11:53+03:00",
-   "courses": 534,
-   "sections": 1587,
-   "hash": "a47f5a7127f9"
+   "updated": "2026-09-23T21:10:05Z",
+   "courses": 537,
+   "sections": 1607,
+   "hash": "9bba03e44a81"
   },
   {
    "code": "202503",
    "name": "Summer 2025-2026",
-   "updated": "2026-06-26T13:01:40+09:00",
-   "courses": 77,
-   "sections": 207,
-   "hash": "374a2a71106c"
+   "updated": "2026-09-23T21:10:11Z",
+   "courses": 70,
+   "sections": 191,
+   "hash": "c8457b1c4050"
   },
   {
    "code": "202502",

@@ -1,0 +1,19 @@
+{
+ "schema": 1,
+ "term": "202602",
+ "name": "Spring 2026-2027",
+ "classesStart": "2027-02-15",
+ "classesEnd": "2027-05-28",
+ "source": "https://www.sabanciuniv.edu/tr/akademik-takvim?b=2026&c=16&d=tr",
+ "updated": "2026-09-23T21:10:15Z",
+ "examsStart": "2027-01-14",
+ "examsEnd": "2027-01-16",
+ "registrationDays": [
+  "2027-02-10",
+  "2027-02-11",
+  "2027-02-12"
+ ],
+ "addDropStart": "2027-02-25",
+ "addDropEnd": "2027-02-26",
+ "holidays": []
+}
