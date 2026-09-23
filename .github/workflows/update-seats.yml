@@ -1,0 +1,36 @@
+name: Update seats
+
+# Every 30 minutes; the script itself only does a full pass during registration and add/drop
+# (dates from data/<term>-calendar.json) and once a day otherwise.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: seats
+  cancel-in-progress: false
+
+jobs:
+  seats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r scraper/requirements.txt
+      - run: python scraper/seats.py --auto
+      - name: Commit
+        run: |
+          if [ -n "$(git status --porcelain data)" ]; then
+            git config user.name "sumods-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data
+            git commit -m "data: seats $(date -u +%H:%MZ)"
+            git pull --rebase
+            git push
+          fi

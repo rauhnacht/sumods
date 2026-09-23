@@ -1,0 +1,52 @@
+name: Deploy to hosting (FTP)
+
+# Use this instead of the Pages deploy at the end of update-data.yml if your hosting is
+# classic shared hosting (cPanel, Plesk, etc.) reached over FTP/FTPS.
+#
+# Repo secrets needed (Settings -> Secrets and variables -> Actions -> New repository secret):
+#   FTP_HOST      e.g. ftp.yourdomain.com
+#   FTP_USERNAME  your FTP account
+#   FTP_PASSWORD  its password
+#   SITE_URL      e.g. https://yourdomain.com  (used so course pages get correct canonical links)
+#
+# If your host's FTP root is not the public web folder, add server-dir below, e.g.
+# server-dir: /public_html/
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Update course data"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pre-render course pages for search engines
+        run: python build_pages.py --base "${{ secrets.SITE_URL }}"
+
+      - name: Upload over FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./
+          server-dir: ./
+          exclude: |
+            **/.git*/**
+            **/.github/**
+            **/tests/**
+            **/scraper/tests/**
+            **/node_modules/**
+            **/dist/**

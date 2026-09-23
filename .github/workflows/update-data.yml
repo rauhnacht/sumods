@@ -1,0 +1,53 @@
+name: Update course data
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"   # every 4 hours
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r scraper/requirements.txt
+
+      - name: Scrape BannerWeb
+        run: python scraper/scrape.py --latest 3
+
+      - name: Final exam schedule (skipped if not published yet)
+        continue-on-error: true
+        run: python scraper/exams.py
+
+      - name: Academic calendar
+        continue-on-error: true
+        run: python scraper/calendar.py
+
+      - name: Course catalogue across the archive
+        run: python tools/build_catalog.py
+
+      - name: Commit changed data
+        run: |
+          if [ -n "$(git status --porcelain data)" ]; then
+            git config user.name "sumods-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data
+            git commit -m "data: refresh $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          else
+            echo "No changes."
+          fi

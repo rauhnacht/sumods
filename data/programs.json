@@ -1,0 +1,77 @@
+{
+ "schema": 1,
+ "note": "Replace with real curricula. tools/import_program.py turns a curriculum table into this shape.",
+ "programs": [
+  {
+   "id": "example-bs",
+   "name": "Example programme (replace with your own)",
+   "example": true,
+   "catalog": "2026",
+   "totalCredits": 132,
+   "groups": [
+    {
+     "name": "University courses",
+     "courses": [
+      "SPS 101",
+      "SPS 102",
+      "HIST 191",
+      "HIST 192",
+      "TLL 101",
+      "TLL 102",
+      "AL 102",
+      "CIP 101"
+     ]
+    },
+    {
+     "name": "Science core",
+     "courses": [
+      "MATH 101",
+      "MATH 102",
+      "NS 101",
+      "NS 102",
+      "IF 100"
+     ]
+    },
+    {
+     "name": "Engineering core",
+     "courses": [
+      "MATH 201",
+      "MATH 202",
+      "MATH 203",
+      "EE 202",
+      "ENS 201",
+      "ENS 202"
+     ]
+    },
+    {
+     "name": "Area electives",
+     "credits": 21,
+     "match": "EE (3|4)\\d{2}",
+     "creditsEach": 3
+    },
+    {
+     "name": "Free electives",
+     "credits": 12,
+     "any": true,
+     "creditsEach": 3
+    }
+   ],
+   "suggested": {
+    "1F": [
+     "MATH 101",
+     "NS 101",
+     "SPS 101",
+     "HIST 191",
+     "AL 102"
+    ],
+    "1S": [
+     "MATH 102",
+     "NS 102",
+     "SPS 102",
+     "HIST 192",
+     "IF 100"
+    ]
+   }
+  }
+ ]
+}

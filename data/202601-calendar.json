@@ -1,0 +1,28 @@
+{
+ "schema": 1,
+ "term": "202601",
+ "name": "Fall 2026-2027",
+ "classesStart": "2026-09-28",
+ "classesEnd": "2026-12-31",
+ "source": "https://www.sabanciuniv.edu/tr/akademik-takvim?b=2026&c=16&d=tr",
+ "updated": "2026-09-23T20:08:24Z",
+ "examsStart": "2027-01-04",
+ "examsEnd": "2027-01-13",
+ "registrationDays": [
+  "2026-09-23",
+  "2026-09-24",
+  "2026-09-25"
+ ],
+ "addDropStart": "2026-10-08",
+ "addDropEnd": "2026-10-09",
+ "holidays": [
+  {
+   "date": "2026-10-29",
+   "name": "Cumhuriyet Bayramı"
+  },
+  {
+   "date": "2027-01-01",
+   "name": "Yeni Yıl Tatili"
+  }
+ ]
+}

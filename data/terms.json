@@ -1,0 +1,149 @@
+{
+ "schema": 1,
+ "terms": [
+  {
+   "code": "202601",
+   "name": "Fall 2026-2027",
+   "updated": "2026-09-23T11:11:53+03:00",
+   "courses": 534,
+   "sections": 1587,
+   "hash": "a47f5a7127f9"
+  },
+  {
+   "code": "202503",
+   "name": "Summer 2025-2026",
+   "updated": "2026-06-26T13:01:40+09:00",
+   "courses": 77,
+   "sections": 207,
+   "hash": "374a2a71106c"
+  },
+  {
+   "code": "202502",
+   "name": "Spring 2025-2026",
+   "updated": "2026-04-30T11:02:49+09:00",
+   "courses": 604,
+   "sections": 1630,
+   "hash": "591b9e14f90e"
+  },
+  {
+   "code": "202501",
+   "name": "Fall 2025-2026",
+   "updated": "2025-12-22T09:40:33+09:00",
+   "courses": 511,
+   "sections": 1405,
+   "hash": "64ab1d8a64c6"
+  },
+  {
+   "code": "202402",
+   "name": "Spring 2024-2025",
+   "updated": "2025-07-07T10:21:21+09:00",
+   "courses": 544,
+   "sections": 1349,
+   "hash": "72cdf05e6639"
+  },
+  {
+   "code": "202401",
+   "name": "Fall 2024-2025",
+   "updated": "2024-08-08T15:56:26+03:00",
+   "courses": 482,
+   "sections": 1381,
+   "hash": "dd23d8bed7a7"
+  },
+  {
+   "code": "202302",
+   "name": "Spring 2023-2024",
+   "updated": "2024-02-05T13:40:23+03:00",
+   "courses": 582,
+   "sections": 1588,
+   "hash": "e527cb2d36b8"
+  },
+  {
+   "code": "202301",
+   "name": "Fall 2023-2024",
+   "updated": "2023-09-23T16:58:04+03:00",
+   "courses": 537,
+   "sections": 1688,
+   "hash": "f6a2c6abb4f3"
+  },
+  {
+   "code": "202202",
+   "name": "Spring 2022-2023",
+   "updated": "2023-02-03T21:40:09+03:00",
+   "courses": 527,
+   "sections": 1554,
+   "hash": "c43d9187fb0a"
+  },
+  {
+   "code": "202201",
+   "name": "Fall 2022-2023",
+   "updated": "2022-09-25T20:09:48+03:00",
+   "courses": 515,
+   "sections": 1670,
+   "hash": "e41b831b5e8e"
+  },
+  {
+   "code": "202102",
+   "name": "Spring 2021-2022",
+   "updated": "2022-02-22T10:42:13+03:00",
+   "courses": 526,
+   "sections": 1655,
+   "hash": "201486685382"
+  },
+  {
+   "code": "202101",
+   "name": "Fall 2021-2022",
+   "updated": "2021-10-04T23:39:32+03:00",
+   "courses": 436,
+   "sections": 1475,
+   "hash": "624f0491dc38"
+  },
+  {
+   "code": "202002",
+   "name": "Spring 2020-2021",
+   "updated": "2021-09-09T10:01:08+03:00",
+   "courses": 405,
+   "sections": 1197,
+   "hash": "6e328ba6641b"
+  },
+  {
+   "code": "202001",
+   "name": "Fall 2020-2021",
+   "updated": "2020-10-13T10:12:46+03:00",
+   "courses": 480,
+   "sections": 1571,
+   "hash": "af84dc042114"
+  },
+  {
+   "code": "201902",
+   "name": "Spring 2019-2020",
+   "updated": "2020-09-18T00:40:52+03:00",
+   "courses": 539,
+   "sections": 1580,
+   "hash": "fd2d76d281c3"
+  },
+  {
+   "code": "201901",
+   "name": "Fall 2019-2020",
+   "updated": "2019-09-19T13:03:57+03:00",
+   "courses": 500,
+   "sections": 1488,
+   "hash": "1b20a11bc49a"
+  },
+  {
+   "code": "201802",
+   "name": "Spring 2018-2019",
+   "updated": "2019-08-22T23:41:50+03:00",
+   "courses": 534,
+   "sections": 1604,
+   "hash": "ec28cdcf596a"
+  },
+  {
+   "code": "201801",
+   "name": "Fall 2018-2019",
+   "updated": "2018-09-28T15:10:20+03:00",
+   "courses": 486,
+   "sections": 1576,
+   "hash": "7251469b18f0"
+  }
+ ]
+}

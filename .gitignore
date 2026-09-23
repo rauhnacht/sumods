@@ -1,0 +1,8 @@
+__pycache__/
+.venv/
+dist/
+shots/
+node_modules/
+courses/
+sitemap.xml
+robots.txt

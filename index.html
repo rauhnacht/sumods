@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SUMods — Sabancı timetable planner</title>
+<meta name="description" content="Build your Sabancı University timetable from the live BannerWeb schedule: search courses, swap sections, spot clashes and copy CRNs for registration.">
+<meta name="theme-color" content="#f2f5f9">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&display=swap">
+<link rel="stylesheet" href="app.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+      <rect x="1" y="2" width="8.4" height="6" rx="2" fill="var(--c0-ink)"></rect>
+      <rect x="11.6" y="2" width="9.4" height="10.6" rx="2" fill="var(--c2-ink)"></rect>
+      <rect x="1" y="9.6" width="8.4" height="10.4" rx="2" fill="var(--c1-ink)"></rect>
+      <rect x="11.6" y="14.2" width="9.4" height="5.8" rx="2" fill="var(--c4-ink)"></rect>
+    </svg>
+    <span>SUMods</span>
+  </div>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button type="button" role="tab" data-view="timetable" aria-selected="true">Timetable</button>
+    <button type="button" role="tab" data-view="today" aria-selected="false">Today</button>
+    <button type="button" role="tab" data-view="plan" aria-selected="false">Plan</button>
+    <button type="button" role="tab" data-view="courses" aria-selected="false">Courses</button>
+    <button type="button" role="tab" data-view="rooms" aria-selected="false">Rooms</button>
+  </nav>
+  <div class="topbar-right">
+    <select class="select" id="term-select" aria-label="Term"></select>
+    <button class="icon-btn" id="theme-btn" type="button" aria-label="Theme"></button>
+  </div>
+</header>
+
+<main>
+  <div class="banner" id="preview-banner" hidden>
+    <span>You're looking at a shared timetable.</span>
+    <button class="btn primary" id="preview-keep" type="button">Save as mine</button>
+    <button class="btn quiet" id="preview-drop" type="button">Back to my timetable</button>
+  </div>
+
+  <!-- ----------------------------------------------------------------- plan -->
+  <section class="view" id="view-plan" hidden>
+    <div id="plan-body"></div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- today -->
+  <section class="view" id="view-today" hidden>
+    <div class="card today-card" id="today-body"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ timetable -->
+  <section class="view" id="view-timetable">
+    <div class="tt-layout">
+      <div class="pane-search">
+        <div class="search-wrap">
+          <div class="search-field">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5L14 14"></path></svg>
+            <input id="search" type="search" autocomplete="off" spellcheck="false" placeholder="Add a course — code, title or instructor" aria-label="Add a course">
+            <button class="search-clear" id="search-clear" type="button" aria-label="Clear">✕</button>
+          </div>
+          <div class="results" id="search-results" hidden></div>
+        </div>
+      </div>
+
+      <div class="pane-grid">
+        <div class="swapbar" id="swapbar" hidden></div>
+        <div class="card grid-card">
+          <div class="tt-toolbar">
+            <span class="tt-meta" id="term-note"></span>
+            <span class="spacer"></span>
+            <button class="chip-btn" type="button" data-orientation="h" title="Days down the side">Rows</button>
+            <button class="chip-btn" type="button" data-orientation="v" title="Days across the top">Columns</button>
+          </div>
+          <div id="grid"></div>
+          <p class="tt-hint" id="hint" hidden>Tap a class to see the other slots it's taught in.</p>
+        </div>
+        <div class="tba-strip" id="tba-strip"></div>
+        <div class="regdays card" id="regdays"></div>
+      </div>
+
+      <div class="pane-side">
+        <div class="summary" id="summary"></div>
+        <div class="actions" id="actions"></div>
+        <div class="finals" id="finals"></div>
+        <div class="course-list" id="course-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------------------- courses -->
+  <section class="view" id="view-courses" hidden>
+    <div class="filters">
+      <div class="search-wrap">
+        <div class="search-field">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5L14 14"></path></svg>
+          <input id="cat-search" type="search" autocomplete="off" placeholder="Filter courses" aria-label="Filter courses">
+        </div>
+      </div>
+      <select class="select" id="cat-subject" aria-label="Subject"></select>
+      <div class="seg" id="cat-level">
+        <button type="button" data-level="all" aria-pressed="true">All</button>
+        <button type="button" data-level="ug" aria-pressed="false">Undergrad</button>
+        <button type="button" data-level="gr" aria-pressed="false">Graduate</button>
+      </div>
+      <span class="cat-sub" id="cat-count"></span>
+    </div>
+    <div class="catalog" id="catalog"></div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- rooms -->
+  <section class="view" id="view-rooms" hidden>
+    <div class="filters">
+      <div class="search-wrap">
+        <div class="search-field">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5L14 14"></path></svg>
+          <input id="room-search" type="search" autocomplete="off" placeholder="Filter rooms, e.g. FENS G0" aria-label="Filter rooms">
+        </div>
+      </div>
+      <select class="select" id="room-day" aria-label="Day"></select>
+      <select class="select" id="room-time" aria-label="Time"></select>
+    </div>
+    <div id="room-free"></div>
+    <div class="room-grid-wrap" id="room-grid-wrap"></div>
+  </section>
+
+  <footer>
+    <span id="source-note"></span><br>
+    Course data comes from Sabancı's public BannerWeb schedule. Seats, prerequisites and last-minute changes live there —
+    check <a href="https://suis.sabanciuniv.edu/prod/bwckschd.p_disp_dyn_sched" target="_blank" rel="noopener">BannerWeb</a> before you register.
+    Not affiliated with Sabancı University.
+  </footer>
+</main>
+
+<nav class="tabbar" aria-label="Sections">
+  <button type="button" data-view="timetable" aria-selected="true">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"></rect><path d="M1.5 6h13M6 6v7.5"></path></svg>
+    Timetable
+  </button>
+  <button type="button" data-view="today" aria-selected="false">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6.2"></circle><path d="M8 4.6V8l2.4 1.6"></path></svg>
+    Today
+  </button>
+  <button type="button" data-view="plan" aria-selected="false">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.6"></rect><path d="M1.8 6.2h12.4M5.6 6.2v7.2M10 2.6v10.8"></path></svg>
+    Plan
+  </button>
+  <button type="button" data-view="courses" aria-selected="false">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 3.5h4a2 2 0 012 2v8a1.6 1.6 0 00-1.4-1H2.5zM13.5 3.5h-4a2 2 0 00-2 2v8a1.6 1.6 0 011.4-1h4.6z"></path></svg>
+    Courses
+  </button>
+  <button type="button" data-view="rooms" aria-selected="false">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M4 2.5h8v11H4z"></path><circle cx="9.7" cy="8.2" r=".7" fill="currentColor" stroke="none"></circle></svg>
+    Rooms
+  </button>
+</nav>
+
+<div id="toast-host"></div>
+
+<dialog id="dlg-crn">
+  <div class="dlg-head">
+    <h2>CRNs</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body" id="crn-body"></div>
+</dialog>
+
+<dialog id="dlg-course">
+  <div class="dlg-head">
+    <h2 id="course-dlg-title">Course</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body" id="course-body"></div>
+  <div class="dlg-foot">
+    <button class="btn primary" id="course-add" type="button">Add to timetable</button>
+    <button class="btn quiet" type="button" data-close>Close</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-event">
+  <div class="dlg-head">
+    <h2>Your own event</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body">
+    <p>Club meetings, a job, the gym — anything that isn't a course. It takes part in clash checks,
+       the optimiser, the calendar file and the image.</p>
+    <div class="event-grid">
+      <label class="full">Title<input type="text" id="event-title" maxlength="40" placeholder="IEEE board meeting"></label>
+      <label>Day<select class="select" id="event-day"></select></label>
+      <label>Starts<input type="time" id="event-start" step="300"></label>
+      <label>Ends<input type="time" id="event-end" step="300"></label>
+      <label class="full">Where<input type="text" id="event-place" maxlength="40" placeholder="UC G030"></label>
+    </div>
+    <div class="palette" id="event-colors"></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn primary" id="event-save" type="button">Save</button>
+    <button class="btn quiet" id="event-delete" type="button" hidden>Delete</button>
+    <button class="btn quiet" type="button" data-close>Cancel</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-import">
+  <div class="dlg-head">
+    <h2>Import transcript</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body" id="import-body"></div>
+  <div class="dlg-foot">
+    <button class="btn primary" id="import-apply" type="button" disabled>Add to my plan</button>
+    <button class="btn quiet" type="button" data-close>Cancel</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-export">
+  <div class="dlg-head">
+    <h2>Add to calendar</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body" id="export-body"></div>
+  <div class="dlg-foot">
+    <button class="btn primary" id="export-run" type="button">Download .ics</button>
+    <button class="btn quiet" type="button" data-close>Cancel</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-arrange">
+  <div class="dlg-head">
+    <h2>Optimiser</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body">
+    <p>Goes through every valid section combination of the courses in your timetable and ranks the
+       ones that fit what you ask for. Nothing changes until you pick an option.</p>
+    <div class="opt-grid">
+      <label>No class before<select class="select" id="opt-earliest">
+        <option value="0">any time</option>
+        <option value="580">09:40</option>
+        <option value="640">10:40</option>
+        <option value="700">11:40</option>
+        <option value="760">12:40</option>
+      </select></label>
+      <label>Done by<select class="select" id="opt-latest">
+        <option value="0">any time</option>
+        <option value="930">15:30</option>
+        <option value="990">16:30</option>
+        <option value="1050">17:30</option>
+        <option value="1110">18:30</option>
+      </select></label>
+    </div>
+    <label class="opt"><input type="checkbox" id="opt-lunch"><span>Keep 12:40–13:30 free for lunch</span></label>
+    <label class="opt"><input type="checkbox" id="opt-days" checked><span>Fewer days on campus</span></label>
+    <label class="opt"><input type="checkbox" id="opt-gaps" checked><span>Fewer gaps between classes</span></label>
+    <label class="opt"><input type="checkbox" id="opt-keep"><span>Keep the lecture sections I chose</span></label>
+    <div class="opt" style="padding-bottom:0"><span>Keep a day clear</span></div>
+    <div class="daychips">
+      <button type="button" data-day="0" aria-pressed="false">Mon</button>
+      <button type="button" data-day="1" aria-pressed="false">Tue</button>
+      <button type="button" data-day="2" aria-pressed="false">Wed</button>
+      <button type="button" data-day="3" aria-pressed="false">Thu</button>
+      <button type="button" data-day="4" aria-pressed="false">Fri</button>
+    </div>
+    <div id="arrange-results"></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn primary" id="arrange-run" type="button">Find options</button>
+    <button class="btn quiet" type="button" data-close>Close</button>
+  </div>
+</dialog>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script>
+  // offline use on a deployed site; the bundled single-file build carries its own data
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !window.SUMODS_DATA) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
+</body>
+</html>

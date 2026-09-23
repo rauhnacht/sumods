@@ -1,0 +1,51 @@
+name: Deploy to hosting (SSH / rsync)
+
+# Use this instead of the Pages deploy if your hosting is a VPS or anything reachable over SSH.
+#
+# Repo secrets needed:
+#   SSH_HOST        server address
+#   SSH_USER        ssh username
+#   SSH_KEY         private key with access to that account (Settings -> Secrets, paste the
+#                   full PEM contents; add the matching public key to the server's authorized_keys)
+#   SSH_TARGET_DIR  absolute path to the site's public folder, e.g. /var/www/sumods
+#   SITE_URL        e.g. https://yourdomain.com
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Update course data"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pre-render course pages for search engines
+        run: python build_pages.py --base "${{ secrets.SITE_URL }}"
+
+      - name: Upload over rsync/SSH
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz --delete
+          path: ./
+          remote_path: ${{ secrets.SSH_TARGET_DIR }}
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USER }}
+          remote_key: ${{ secrets.SSH_KEY }}
+          exclude: |
+            .git*/
+            .github/
+            tests/
+            scraper/tests/
+            node_modules/
+            dist/
