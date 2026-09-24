@@ -148,6 +148,34 @@ async function loadPrograms() {
 }
 
 /** Requirements for one programme and entry term, following "same as" links. */
+/** Manually-maintained corrections on top of the scraped requirements — for things a degree
+ * page doesn't spell out as machine-readable, like a transitional either/or between two
+ * courses. See data/programs/overrides.json. */
+async function loadOverrides() {
+  if (App.overrides) return App.overrides;
+  let raw = window.SUMODS_DATA ? window.SUMODS_DATA.programOverrides : null;
+  if (!raw && !window.SUMODS_DATA) raw = await fetchJSON('data/programs/overrides.json').catch(() => null);
+  App.overrides = (raw && raw.overrides) || [];
+  return App.overrides;
+}
+
+function applyOverrides(entry, code, entryTerm, overrides) {
+  const relevant = overrides.filter((o) => o.program === code
+    && (!o.entries || ((!o.entries.from || entryTerm >= o.entries.from) && (!o.entries.to || entryTerm <= o.entries.to))));
+  if (!relevant.length) return entry;
+  const groups = (entry.groups || []).map((g) => ({ ...g, courses: g.courses ? g.courses.slice() : g.courses }));
+  const notes = [];
+  for (const o of relevant) {
+    const group = groups.find((g) => g.name === o.group || g.kind === o.group);
+    if (!group || !group.courses) continue;
+    const i = group.courses.findIndex((slot) => slotCodes(slot).includes(o.replace));
+    if (i === -1) continue;
+    group.courses[i] = o.with;
+    if (o.note) notes.push(o.note);
+  }
+  return { ...entry, groups, notes: [...(entry.notes || []), ...notes] };
+}
+
 async function loadRequirements(code, entryTerm) {
   const listed = (App.programs || []).find((p) => p.code === code);
   if (!listed) return null;
@@ -164,7 +192,9 @@ async function loadRequirements(code, entryTerm) {
   let entry = entries[term];
   for (let hop = 0; entry && entry.sameAs && hop < 20; hop += 1) entry = entries[entry.sameAs];
   if (!entry) return null;
-  return { code, name: file.name, entry: term, ...entry };
+  const overrides = await loadOverrides();
+  const patched = applyOverrides(entry, code, term, overrides);
+  return { code, name: file.name, entry: term, ...patched };
 }
 
 const courseInfo = (code) => (App.info && App.info.courses ? App.info.courses[code] || null : null);
@@ -210,6 +240,7 @@ async function refreshSeats(crns) {
   try {
     const res = await fetch(`${LIVE_SEATS}/?term=${App.idx.term}&crns=${crns.slice(0, 12).join(',')}`);
     const body = await res.json();
+    if (body.pollSeconds) App.seatsPollSeconds = body.pollSeconds;
     Object.entries(body.seats || {}).forEach(([crn, row]) => {
       if (row) App.liveSeats[crn] = { row, at: body.updated };
     });
@@ -217,6 +248,29 @@ async function refreshSeats(crns) {
   } catch {
     return false;
   }
+}
+
+/** Keeps a course panel's seats live-ticking while it's open, at the cadence the seats
+ * worker advertises (App.seatsPollSeconds, default 10s) — stops itself once the dialog
+ * closes or moves to a different course. This, not a faster background cron (GitHub Actions
+ * can't schedule below 5 minutes), is what makes seats feel close to real time. */
+function stopSeatsPolling() {
+  if (App.seatsPollTimer) { clearInterval(App.seatsPollTimer); App.seatsPollTimer = null; }
+}
+
+async function startSeatsPolling(code, course) {
+  stopSeatsPolling();
+  if (!LIVE_SEATS) return;
+  const crns = course.components.flatMap((comp) => comp.sections.map((s) => s.crn));
+  const stillOpen = () => $('#dlg-course').open && $('#course-add').dataset.code === code;
+  const tick = async () => {
+    if (!stillOpen()) { stopSeatsPolling(); return; }
+    const ok = await refreshSeats(crns);
+    if (ok && stillOpen()) openCourseDialog(code, { keepPolling: true });
+  };
+  await tick();   // wait for the first read so we know the server's real cadence before scheduling
+  if (!stillOpen()) return;   // the dialog may already be closed by the time this resolves
+  App.seatsPollTimer = setInterval(tick, (App.seatsPollSeconds || 10) * 1000);
 }
 
 /** Finals for one course+section, from scraper/exams.py. */
@@ -1448,21 +1502,17 @@ function prereqGraphSVG(code) {
     ${back1.some((n) => n.alt) ? '<p class="cat-sub">Outlined boxes are alternatives — one of them is enough.</p>' : ''}</div>`;
 }
 
-function openCourseDialog(code) {
+function openCourseDialog(code, { keepPolling = false } = {}) {
   const course = App.idx.byCode.get(code);
   if (!course) return;
-  if (!App.union) ensureUnion().then(() => { if ($('#dlg-course').open) openCourseDialog(code); });
+  if (!App.union) ensureUnion().then(() => { if ($('#dlg-course').open) openCourseDialog(code, { keepPolling: true }); });
   const added = !!entry(code);
   $('#course-dlg-title').textContent = `${course.code} ${course.title}`;
   $('#course-body').innerHTML = courseDetailHTML(course);
   $('#course-add').textContent = added ? 'Remove from timetable' : 'Add to timetable';
   $('#course-add').dataset.code = code;
   if (!$('#dlg-course').open) $('#dlg-course').showModal();
-  if (LIVE_SEATS && !App.liveFetched?.[code]) {
-    (App.liveFetched = App.liveFetched || {})[code] = true;
-    const crns = course.components.flatMap((comp) => comp.sections.map((s) => s.crn));
-    refreshSeats(crns).then((ok) => { if (ok && $('#dlg-course').open) openCourseDialog(code); });
-  }
+  if (LIVE_SEATS && !keepPolling) startSeatsPolling(code, course);
 }
 
 /* ------------------------------------------------------------- degree plan */
@@ -1629,12 +1679,20 @@ function planIssues(termId, course) {
   return issues;
 }
 
-const currentProgram = () => App.requirements || null;
+/** All active majors' resolved requirement sets, in Plan order. Most call sites only care
+ * about the first (primary) one; use activePrograms() for double-major-aware logic. */
+const currentProgram = () => (App.requirements && App.requirements[0]) || null;
+const activePrograms = () => App.requirements || [];
 
 async function refreshRequirements() {
   const plan = planState();
-  App.requirements = plan.program ? await loadRequirements(plan.program, plan.entry) : null;
-  if (App.requirements && !plan.entry && App.requirements.entry !== 'any') plan.entry = App.requirements.entry;
+  const slots = [['program', 'entry'], ['program2', 'entry2']].filter(([p]) => plan[p]);
+  const results = await Promise.all(slots.map(([p, e]) => loadRequirements(plan[p], plan[e])));
+  slots.forEach(([p, e], i) => {
+    const req = results[i];
+    if (req && !plan[e] && req.entry !== 'any') plan[e] = req.entry;
+  });
+  App.requirements = results.filter(Boolean);
   if (store.view === 'plan') renderPlanner();
   if (store.view === 'timetable') render();
 }
@@ -1644,16 +1702,24 @@ async function refreshRequirements() {
  * area that lists it and still has room; core electives beyond the core minimum spill into
  * area electives, and anything left over counts as a free elective.
  */
+/** A "slot" in a group's course list is normally one required code; an array means any ONE
+ * of those alternatives satisfies that same slot (see data/programs/overrides.json). */
+const slotCodes = (slot) => (Array.isArray(slot) ? slot : [slot]);
+const slotLabel = (slot) => (Array.isArray(slot) ? slot.join(' or ') : slot);
+const flatCourseCodes = (list) => (list || []).flatMap(slotCodes);
+const FAILING_GRADES = ['F', 'NA', 'W', 'U'];
+
 function requirementProgress(program) {
   const planned = allPlanned();
   const creditMap = program.credits || {};
-  const coreCodes = new Set((program.groups || []).filter((g) => g.kind === 'core').flatMap((g) => g.courses || []));
+  const coreCodes = new Set((program.groups || []).filter((g) => g.kind === 'core').flatMap((g) => flatCourseCodes(g.courses)));
   const used = new Set();
   const creditsOf = (course, group) => course.credits ?? (creditMap[course.code] || [])[0] ?? group.creditsEach ?? 3;
   const ectsOf = (course) => course.ects ?? (creditMap[course.code] || [])[1] ?? null;
+  const passed = (course) => !(course.grade && FAILING_GRADES.includes(course.grade));
 
   const accepts = (group, course) => {
-    if ((group.courses || []).includes(course.code)) return true;
+    if (flatCourseCodes(group.courses).includes(course.code)) return true;
     if (group.kind === 'area' && coreCodes.has(course.code)) return true;
     if (group.kind === 'free' || group.any) return true;
     if (group.match) {
@@ -1670,17 +1736,38 @@ function requirementProgress(program) {
     if (byCount !== null) return byCount;
     return group.courses && matches.length >= group.courses.length;
   };
+  const isSlotList = (group) => (group.courses || []).length
+    && (group.kind === 'required' || group.kind === 'university') && !group.credits && !group.minCourses;
 
   return (program.groups || []).filter((g) => g.kind !== 'total').map((group) => {
     const matches = [];
-    // listed courses first, so an area's own courses aren't crowded out by overflow
-    const ordered = planned.slice().sort((a, b) => Number((group.courses || []).includes(b.code)) - Number((group.courses || []).includes(a.code)));
-    for (const course of ordered) {
-      if (used.has(course.code) || !accepts(group, course) || full(group, matches)) continue;
-      if (course.grade && ['F', 'NA', 'W', 'U'].includes(course.grade)) continue;
-      matches.push({ ...course, credits: creditsOf(course, group), ects: ectsOf(course) });
-      used.add(course.code);
+    let missing = [];
+
+    if (isSlotList(group)) {
+      // one match per listed slot at most, alternatives inside a slot compete for the same slot
+      const filledSlots = new Set();
+      for (const slot of group.courses) {
+        const codes = slotCodes(slot);
+        const course = planned.find((c) => !used.has(c.code) && passed(c) && codes.includes(c.code));
+        if (course) {
+          matches.push({ ...course, credits: creditsOf(course, group), ects: ectsOf(course), slot });
+          used.add(course.code);
+          filledSlots.add(slot);
+        }
+      }
+      missing = group.courses.filter((slot) => !filledSlots.has(slot)).map(slotLabel);
+    } else {
+      // credit/count/any/match-driven electives: listed courses first so they aren't crowded
+      // out of their own area by overflow from other groups
+      const listed = flatCourseCodes(group.courses);
+      const ordered = planned.slice().sort((a, b) => Number(listed.includes(b.code)) - Number(listed.includes(a.code)));
+      for (const course of ordered) {
+        if (used.has(course.code) || !passed(course) || !accepts(group, course) || full(group, matches)) continue;
+        matches.push({ ...course, credits: creditsOf(course, group), ects: ectsOf(course) });
+        used.add(course.code);
+      }
     }
+
     const doneCredits = matches.reduce((n, m) => n + m.credits, 0);
     const ects = matches.reduce((n, m) => n + (m.ects || 0), 0);
     return {
@@ -1691,19 +1778,19 @@ function requirementProgress(program) {
       earned: earnedCredits(matches),
       target: group.credits || null,
       targetCount: group.minCourses || group.choose || (group.courses && !group.credits ? group.courses.length : null),
-      missing: group.kind === 'required' || group.kind === 'university'
-        ? (group.courses || []).filter((c) => !matches.some((m) => m.code === c))
-        : [],
+      missing,
     };
   });
 }
 
 /** Required and core courses of the chosen programme — seniors may take these on day one. */
 function seniorDayOneCodes() {
-  const program = currentProgram();
-  if (!program) return new Set();
-  return new Set((program.groups || []).filter((g) => g.kind === 'required' || g.kind === 'core')
-    .flatMap((g) => g.courses || []));
+  const codes = new Set();
+  for (const program of activePrograms()) {
+    (program.groups || []).filter((g) => g.kind === 'required' || g.kind === 'core')
+      .forEach((g) => flatCourseCodes(g.courses).forEach((c) => codes.add(c)));
+  }
+  return codes;
 }
 
 function termOptions(selected) {
@@ -1724,32 +1811,29 @@ function suggestedTermId() {
   return App.index?.terms?.[0]?.code || '202601';
 }
 
-function renderPlanner() {
-  const host = $('#plan-body');
-  if (!host) return;
-  const plan = planState();
-  const program = currentProgram();
-  const planned = allPlanned();
-  const overall = gpaOf(planned);
-  const earned = earnedCredits(planned);
+function programSelectOptions(selectedCode, excludeCode) {
+  return ['<option value="">—</option>'].concat((App.programs || [])
+    .filter((p) => p.code !== excludeCode)
+    .map((p) => `<option value="${esc(p.code)}"${p.code === selectedCode ? ' selected' : ''}>${esc(p.name)}${p.legacy ? '' : ` (${esc(p.code)})`}</option>`)).join('');
+}
 
-  const programOptions = ['<option value="">No programme</option>'].concat((App.programs || []).map((p) =>
-    `<option value="${esc(p.code)}"${p.code === plan.program ? ' selected' : ''}>${esc(p.name)}${p.legacy ? '' : ` (${esc(p.code)})`}</option>`)).join('');
-  const listed = (App.programs || []).find((p) => p.code === plan.program);
-  const entryOptions = listed && !listed.legacy ? listed.entries.map((id) =>
-    `<option value="${esc(id)}"${id === (program && program.entry) ? ' selected' : ''}>Entered ${esc(termLabel(id))}</option>`).join('') : '';
+function entrySelectOptions(programCode, selectedEntry) {
+  const listed = (App.programs || []).find((p) => p.code === programCode);
+  if (!listed || listed.legacy) return '';
+  return listed.entries.map((id) =>
+    `<option value="${esc(id)}"${id === selectedEntry ? ' selected' : ''}>Entered ${esc(termLabel(id))}</option>`).join('');
+}
 
-  const stats = [
-    overall ? `<span class="stat">CGPA <b>${overall.gpa.toFixed(2)}</b></span>` : '',
-    earned ? `<span class="stat"><b>${earned}</b> SU credits earned</span>` : '',
-    `<span class="stat"><b>${planned.length}</b> course${planned.length === 1 ? '' : 's'} planned</span>`,
-  ].filter(Boolean).join('');
-
-  const progress = program ? requirementProgress(program) : [];
-  const reqHTML = program ? `
+/** One major's requirement grid, with each area expandable to show which of the student's
+ * own courses filled it (and what it substituted for, when an override made a slot an
+ * either/or). `slot` groups the requirement-progress rows under a stable id for the toggle. */
+function requirementBlockHTML(program, slot) {
+  const progress = requirementProgress(program);
+  return `
     ${program.example ? '<p class="banner" style="margin-bottom:10px">Example programme data — replace data/programs.json with your own.</p>' : ''}
     ${program.totalCredits ? `<p class="cat-sub">Graduation needs ${esc(program.totalCredits)} SU credits${program.totalEcts ? ` and ${esc(program.totalEcts)} ECTS` : ''}${program.entry && program.entry !== 'any' ? ` for students who entered in ${esc(termLabel(program.entry))}` : ''}.</p>` : ''}
-    <div class="req-grid">${progress.map(({ group, matches, doneCredits, earned: got, target, targetCount, missing, ects }) => {
+    ${(program.notes || []).map((n) => `<p class="cat-sub">${esc(n)}</p>`).join('')}
+    <div class="req-grid">${progress.map(({ group, matches, doneCredits, earned: got, target, targetCount, missing, ects }, i) => {
       const parts = [];
       if (target) parts.push(`${doneCredits}/${target} cr`);
       if (targetCount && (group.minCourses || !target)) parts.push(`${matches.length}/${targetCount} courses`);
@@ -1757,18 +1841,57 @@ function renderPlanner() {
       const label = parts.join(', ') || `${matches.length} courses`;
       const ratio = target ? Math.min(1, doneCredits / target) : targetCount ? Math.min(1, matches.length / targetCount) : 1;
       const earnedRatio = target ? Math.min(1, got / target) : 0;
-      return `<div class="req-card">
+      const id = `${slot}:${i}`;
+      const open = App.openReqCards && App.openReqCards.has(id);
+      return `<div class="req-card${open ? ' open' : ''}" data-req-toggle="${esc(id)}">
         <div class="req-top"><b>${esc(group.name)}</b><span>${esc(label)}</span></div>
         <div class="bar"><span style="width:${Math.round(ratio * 100)}%"></span>
           ${earnedRatio ? `<i style="width:${Math.round(earnedRatio * 100)}%"></i>` : ''}</div>
         ${missing.length && missing.length <= 8 ? `<p class="req-missing">Left: ${missing.map((c) => esc(c)).join(', ')}</p>` : ''}
+        ${open ? `<div class="req-detail">${matches.length ? matches.map((m) => `
+            <div class="req-detail-row">
+              <span class="req-detail-code">${esc(m.code)}</span>
+              <span class="req-detail-title">${esc(courseFacts(m).title)}</span>
+              <span class="req-detail-term">${m.term ? esc(termLabel(m.term)) : ''}${m.grade ? ` · ${esc(m.grade)}` : ''}</span>
+              ${Array.isArray(m.slot) ? `<span class="req-detail-sub">counts in place of ${esc(m.slot.filter((c) => c !== m.code).join(', '))}</span>` : ''}
+            </div>`).join('') : '<p class="empty-note">Nothing assigned here yet.</p>'}
+          </div>` : ''}
       </div>`;
-    }).join('')}</div>` : '<p class="empty-note">No programme loaded. Put a curriculum in data/programs.json (tools/import_program.py builds one) to track requirements.</p>';
+    }).join('')}</div>`;
+}
+
+function renderPlanner() {
+  const host = $('#plan-body');
+  if (!host) return;
+  const plan = planState();
+  const programs = activePrograms();
+  const planned = allPlanned();
+  const overall = gpaOf(planned);
+  const earned = earnedCredits(planned);
+
+  const entryOptions1 = entrySelectOptions(plan.program, programs[0] && programs[0].entry);
+  const entryOptions2 = entrySelectOptions(plan.program2, programs[1] && programs[1].entry);
+
+  const stats = [
+    overall ? `<span class="stat">CGPA <b>${overall.gpa.toFixed(2)}</b></span>` : '',
+    earned ? `<span class="stat"><b>${earned}</b> SU credits earned</span>` : '',
+    `<span class="stat"><b>${planned.length}</b> course${planned.length === 1 ? '' : 's'} planned</span>`,
+  ].filter(Boolean).join('');
+
+  const reqHTML = programs.length
+    ? programs.map((program, i) => `
+        ${programs.length > 1 ? `<h3 class="side-head" style="margin-top:${i ? '18px' : '0'}">${esc(program.name)}${i === 0 ? ' (primary)' : ' (double major)'}</h3>` : ''}
+        ${requirementBlockHTML(program, i === 0 ? 'p1' : 'p2')}`).join('')
+    : '<p class="empty-note">No programme loaded. Put a curriculum in data/programs.json (tools/import_program.py builds one) to track requirements.</p>';
 
   host.innerHTML = `
     <div class="filters">
-      <select class="select" id="plan-program" aria-label="Programme">${programOptions}</select>
-      ${entryOptions ? `<select class="select" id="plan-entry" aria-label="Entry term">${entryOptions}</select>` : ''}
+      <label class="reg-pick">Programme
+        <select class="select" id="plan-program" aria-label="Programme">${programSelectOptions(plan.program, plan.program2)}</select></label>
+      ${entryOptions1 ? `<select class="select" id="plan-entry" aria-label="Entry term">${entryOptions1}</select>` : ''}
+      <label class="reg-pick">Double major
+        <select class="select" id="plan-program2" aria-label="Double major">${programSelectOptions(plan.program2, plan.program)}</select></label>
+      ${entryOptions2 ? `<select class="select" id="plan-entry2" aria-label="Second entry term">${entryOptions2}</select>` : ''}
       ${(() => {
         const standing = classStanding();
         if (standing.auto) return `<span class="stat">${esc(STANDING_LABELS[standing.value])} (${standing.earned} SU credits)</span>`;
@@ -1780,7 +1903,7 @@ function renderPlanner() {
           </select></label>`;
       })()}
       <button class="btn" type="button" id="plan-import">Import transcript</button>
-      ${program && program.suggested ? '<button class="btn" type="button" id="plan-fill">Fill suggested plan</button>' : ''}
+      ${currentProgram() && currentProgram().suggested ? '<button class="btn" type="button" id="plan-fill">Fill suggested plan</button>' : ''}
       <button class="btn quiet" type="button" id="plan-clear">Clear plan</button>
       ${stats}
     </div>
@@ -1938,11 +2061,18 @@ function parseTranscript(text) {
 
   const programs = [...flat.matchAll(/Program\s*:\s*([^(]+?)\s*\(/g)].map((x) => clean(x[1]))
     .filter((name) => !/^Programs of/i.test(name));
+  // a double major shows two distinct programme names across the transcript's terms; the
+  // most recently listed of each is what the student is actually pursuing now
+  const distinct = [...new Set(programs)];
   const out = [...terms.entries()]
     .map(([id, courses]) => ({ id, courses: [...courses.values()] }))
     .filter((t) => t.courses.length)
     .sort((a, b) => a.id.localeCompare(b.id));
-  return { terms: out, courses: out.reduce((n, t) => n + t.courses.length, 0), program: programs[programs.length - 1] || null };
+  return {
+    terms: out, courses: out.reduce((n, t) => n + t.courses.length, 0),
+    program: programs[programs.length - 1] || null,
+    program2: distinct.length > 1 ? distinct.filter((p) => p !== programs[programs.length - 1]).pop() || null : null,
+  };
 }
 
 const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
@@ -2052,18 +2182,24 @@ function applyTranscript() {
       });
     }
   }
-  // pick the programme and entry term the transcript points to, if nothing is chosen yet
-  if (parsed.program && !plan.program && App.programs) {
-    const wanted = fold(parsed.program);
-    const match = App.programs.find((p) => fold(p.name).includes(wanted) || wanted.includes(fold(p.name)));
-    if (match) {
-      plan.program = match.code;
-      plan.entry = parsed.terms[0] ? parsed.terms[0].id : null;
-    }
+  // pick the programme(s) and entry term(s) the transcript points to, if nothing is chosen yet
+  const matchProgram = (name) => App.programs && App.programs.find((p) => {
+    const wanted = fold(name);
+    return fold(p.name).includes(wanted) || wanted.includes(fold(p.name));
+  });
+  if (parsed.program && !plan.program) {
+    const match = matchProgram(parsed.program);
+    if (match) { plan.program = match.code; plan.entry = parsed.terms[0] ? parsed.terms[0].id : null; }
+  }
+  if (parsed.program2 && !plan.program2) {
+    const match2 = matchProgram(parsed.program2);
+    if (match2 && match2.code !== plan.program) { plan.program2 = match2.code; plan.entry2 = parsed.terms[0] ? parsed.terms[0].id : null; }
   }
   save();
   refreshRequirements();
-  toast(`${parsed.courses} courses imported${plan.program ? '' : ''}`);
+  const progNote = plan.program2 ? ` — ${(App.programs.find((p) => p.code === plan.program) || {}).name} + ${(App.programs.find((p) => p.code === plan.program2) || {}).name} detected`
+    : plan.program ? ` — ${(App.programs.find((p) => p.code === plan.program) || {}).name} detected` : '';
+  toast(`${parsed.courses} courses imported${progNote}`);
 }
 
 /* --------------------------------------------------------------- today view */
@@ -3118,6 +3254,7 @@ function bindEvents() {
 
   // dialogs
   $$('[data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
+  $('#dlg-course').addEventListener('close', stopSeatsPolling);
   $('#dlg-crn').addEventListener('click', async (e) => {
     const row = e.target.closest('[data-crn]');
     if (row) {
@@ -3250,6 +3387,14 @@ function bindEvents() {
 
   // planner
   $('#plan-body').addEventListener('click', (e) => {
+    const reqToggle = e.target.closest('[data-req-toggle]');
+    if (reqToggle) {
+      if (!App.openReqCards) App.openReqCards = new Set();
+      const key = reqToggle.dataset.reqToggle;
+      if (App.openReqCards.has(key)) App.openReqCards.delete(key); else App.openReqCards.add(key);
+      renderPlanner();
+      return;
+    }
     const card = e.target.closest('[data-term]');
     const id = card && card.dataset.term;
     const addButton = e.target.closest('[data-add]');
@@ -3295,6 +3440,13 @@ function bindEvents() {
       refreshRequirements();
     }
     if (e.target.id === 'plan-entry') { planState().entry = e.target.value; save(); refreshRequirements(); }
+    if (e.target.id === 'plan-program2') {
+      planState().program2 = e.target.value || null;
+      planState().entry2 = planState().terms[0] ? planState().terms[0].id : null;
+      save();
+      refreshRequirements();
+    }
+    if (e.target.id === 'plan-entry2') { planState().entry2 = e.target.value; save(); refreshRequirements(); }
     if (e.target.id === 'plan-standing') { planState().manualStanding = e.target.value || null; save(); renderPlanner(); }
     const grade = e.target.closest('[data-grade]');
     if (grade) {

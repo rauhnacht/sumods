@@ -1,0 +1,13 @@
+{
+ "schema": 1,
+ "overrides": [
+  {
+   "program": "BSEE",
+   "group": "Required Courses",
+   "replace": "EE 321",
+   "with": ["EE 321", "CS 303"],
+   "entries": { "from": "202301", "to": "202701" },
+   "note": "Transitional teach-out: for students who entered between Fall 2023-2024 and Fall 2027-2028, either EE 321 or CS 303 satisfies this requirement. From Fall 2028-2029 (entry 202801) onward, only EE 321 counts — adjust the \"to\" entry term above once the exact official cutoff is confirmed."
+  }
+ ]
+}

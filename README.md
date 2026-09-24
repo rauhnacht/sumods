@@ -43,8 +43,12 @@ scraper/seats.py     seat availability per CRN
 - **Plan** — a degree plan built from the terms you add (any Fall/Spring/Summer, past or
   future): courses per term, credits and term GPA, editable grades, a running CGPA, a warning
   when something sits before its prerequisite or in a term it isn't usually offered in, and
-  progress against the programme's requirement groups. Programmes come from
-  `data/programs.json`; the shipped file is an example to replace.
+  progress against the programme's requirement groups. Pick a **double major** alongside the
+  primary programme and both track independently, side by side. Click a requirement card to
+  see exactly which of your courses filled it — and, when a course is standing in for another
+  under a transitional rule, what it's counted in place of. Programmes come from
+  `data/programs/`; `data/programs/overrides.json` holds hand-maintained corrections (like an
+  either/or between two courses during a curriculum transition) that survive re-scraping.
 - **Import transcript** — open your BannerWeb *Academic Records Summary* (saved as HTML, or
   printed to PDF) and the plan fills itself in: every term, course, credit, ECTS and grade.
   The file is read inside the browser tab — it is never uploaded, and the name and student
@@ -301,6 +305,30 @@ The page layout isn't documented, so the parser reads it by meaning — the summ
 headings that name an area, and course codes in the rows after them — whether the headings
 are table rows, bold text or `<h4>`s. If a real page comes back empty, `--dump` + `--html`
 shows what it saw.
+
+### Manual corrections: `data/programs/overrides.json`
+
+A degree page lists courses, not policy footnotes — something like "either EE 321 or CS 303
+satisfies this requirement for now, but only EE 321 will count from a later entry cohort
+onward" isn't machine-readable from the scraped table. `overrides.json` patches the scraped
+requirements for exactly this kind of case, scoped to the entry terms it actually applies to,
+so it naturally stops applying once a cohort ages out — no code change needed later:
+
+```jsonc
+{"overrides": [{
+  "program": "BSEE", "group": "Required Courses",
+  "replace": "EE 321", "with": ["EE 321", "CS 303"],
+  "entries": { "from": "202301", "to": "202701" },
+  "note": "Either course satisfies this for students who entered 202301–202701; EE 321 only from 202801."
+}]}
+```
+
+`replace` is the course code as it appears in the scraped group; `with` becomes the new
+either/or slot (any one of those courses fills it — the requirement panel shows which one a
+student actually used, and what it substituted for). `entries.from`/`to` are inclusive and
+either can be omitted for an open-ended range. This file is never touched by
+`scraper/programs.py`, so it survives every re-scrape. The shipped entry is a real EE example
+with a placeholder `to` — adjust it once the official cutoff term is confirmed.
 
 ### Programmes by hand: `tools/import_program.py`
 
