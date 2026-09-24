@@ -34,7 +34,21 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from scrape import clean, make_session  # noqa: E402
+from scrape import clean, make_session, active_term_code  # noqa: E402
+
+
+def default_term(index: dict, data_dir) -> str:
+    """The term actually in session now, if we have its schedule; else the newest listed.
+
+    A term can appear in terms.json (sorted by code) before its classes start — next
+    Spring shows up while this Fall is still running, and its higher code would otherwise
+    look like "the current term" by pure sorting.
+    """
+    codes = {t["code"] for t in index["terms"]}
+    active = active_term_code()
+    if active in codes and (data_dir / f"{active}.json").exists():
+        return active
+    return index["terms"][0]["code"]
 
 SYLLABUS_URL = ("https://apps.sabanciuniv.edu/courses/syllabus/view.php"
                 "?term={term}&sc={subj}&cn={num}&section={section}&view=su")
@@ -256,7 +270,7 @@ def main(argv=None) -> int:
 
     data_dir = Path(args.data)
     index = json.loads((data_dir / "terms.json").read_text(encoding="utf-8"))
-    term = args.term or index["terms"][0]["code"]
+    term = args.term or default_term(index, data_dir)
     schedule = json.loads((data_dir / f"{term}.json").read_text(encoding="utf-8"))
 
     out_path = data_dir / f"{term}-info.json"

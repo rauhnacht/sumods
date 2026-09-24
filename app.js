@@ -26,6 +26,22 @@ function durText(mins) {
   return h && m ? `${h}h ${m}m` : h ? `${h}h` : `${m}m`;
 }
 
+/** The term code whose classes are running today (Istanbul date), independent of code sort
+ * order — a future term can already be listed (and sorts higher) before its classes start. */
+function activeTermCode(dateStr) {
+  const [y, m] = (dateStr || istanbulToday()).split('-').map(Number);
+  if (m >= 8) return `${y}01`;
+  if (m <= 4) return `${y - 1}02`;
+  return `${y - 1}03`;
+}
+
+/** Prefer the term actually in session; fall back to the newest listed if we have no data
+ * for it (its schedule hasn't loaded/been scraped yet) or it isn't in the list at all. */
+function defaultTermCode(terms) {
+  const active = activeTermCode();
+  return terms.some((t) => t.code === active) ? active : terms[0].code;
+}
+
 function istanbulToday() {
   try {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -852,7 +868,7 @@ function renderTimetable() {
     ? `<div><p>No courses yet</p><small>Search by code (EE 311), title (signals) or an instructor's name.</small>
        <button class="btn" id="sample-btn" type="button">Load a sample first-year timetable</button></div>`
     : '';
-  renderGrid(host, all, { orientation: orientation(), nowLine: store.term === App.index.terms[0].code, empty: emptyHTML });
+  renderGrid(host, all, { orientation: orientation(), nowLine: store.term === defaultTermCode(App.index.terms), empty: emptyHTML });
 
   // swap bar
   const hint = $('#hint');
@@ -3283,7 +3299,7 @@ async function boot() {
 
   const hash = parseHash();
   let term = hash?.term || store.term;
-  if (!terms.some((t) => t.code === term)) term = terms[0].code;
+  if (!terms.some((t) => t.code === term)) term = defaultTermCode(terms);
   await setTerm(term, { silent: true });
   if (!App.idx) return;
   if (hash?.kind === 'share') startPreview(hash);
