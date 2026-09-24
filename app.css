@@ -493,6 +493,11 @@ main { padding: 14px max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-a
 .crn-chip { border: 1px solid var(--rule); background: var(--surface-2); border-radius: 6px; padding: 1px 7px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .crn-chip:hover { border-color: var(--accent); color: var(--accent); }
 .reg-flags { font-size: 11.5px; color: var(--ink-3); }
+.restricted-row { background: color-mix(in srgb, var(--c2-bg) 35%, transparent); }
+.restrict-badge {
+  display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+  background: var(--c2-bg); color: var(--c2-ink); border-radius: 5px; padding: 1px 6px; margin-left: 4px; vertical-align: 1px; cursor: help;
+}
 
 .side-head { font-size: 12px; font-weight: 700; color: var(--ink-3); margin: 0 0 6px; font-stretch: 84%; text-transform: uppercase; letter-spacing: .04em; }
 .finals { margin-bottom: 14px; }

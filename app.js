@@ -992,6 +992,14 @@ function myPrograms() {
   return chosen;
 }
 
+/**
+ * Day one is senior-only by university policy, EXCEPT critical (*) courses, which drop that
+ * restriction on day one specifically. So a non-critical course's day-one column is not
+ * something an ordinary student can act on — they fall through to day two (or three, always
+ * open to everyone). Seniors get an independent, unconditional right to register their own
+ * programme's required/core courses on day one regardless of this table at all; that part is
+ * layered on afterwards in renderRegDays() via seniorDayOneCodes(), not decided here.
+ */
 function registrationDay(code) {
   if (!App.regdays) return null;
   const entry = App.regdays.courses[code];
@@ -1000,9 +1008,10 @@ function registrationDay(code) {
   for (const day of ['1', '2', '3']) {
     const value = entry.days[day];
     if (!value) continue;
-    if (value === 'ALL' || (mine.length && mine.some((p) => value.includes(p)))) {
-      return { day: Number(day), entry, all: value === 'ALL' };
-    }
+    if (day === '1' && !entry.critical) continue;   // ordinary students can't use a non-critical day-one slot
+    if (value === 'ALL') return { day: Number(day), entry, all: true, why: day === '1' ? 'critical — open to everyone' : 'open to everyone' };
+    const matched = mine.find((p) => value.includes(p));
+    if (matched) return { day: Number(day), entry, all: false, why: day === '1' ? `critical (${matched})` : `your programme (${matched})` };
   }
   return { day: null, entry };
 }
@@ -1048,21 +1057,19 @@ function renderRegDays() {
     ${myPrograms().length ? `
       <table class="reg-table">
         <tr><th>Day</th><th>Course</th><th>CRNs</th><th></th></tr>
-        ${rows.map((row) => `<tr>
+        ${rows.map((row) => `<tr class="${row.entry && row.entry.restricted ? 'restricted-row' : ''}">
           <td>${row.day ? `<span class="day-badge d${row.day}${regDate(row.day) === istanbulToday() ? ' today' : ''}">Day ${row.day}${regDate(row.day) ? ` · ${esc(shortDate(regDate(row.day)))}` : ''}</span>`
             : '<span class="day-badge none">not listed</span>'}</td>
-          <td class="reg-code c${row.color}">${esc(row.code)}</td>
+          <td class="reg-code c${row.color}">${esc(row.code)}${row.entry && row.entry.restricted ? ' <span class="restrict-badge" title="Class restriction applies every day of registration, not just the day shown — check the catalog for which classes/levels are allowed.">⚠ restricted</span>' : ''}</td>
           <td class="reg-crns">${row.crns.map((s) => `<button type="button" class="crn-chip" data-crn="${esc(s.crn)}">${esc(s.crn)}</button>${seatBadge(s.crn)}`).join('')}</td>
           <td class="reg-flags">${[
-            row.senior ? 'senior: required/core' : '',
+            row.senior ? 'senior override: required/core' : row.why || '',
             row.entry && row.entry.critical ? 'critical' : '',
-            row.entry && row.entry.restricted ? 'class restriction' : '',
-            row.day === 3 && !row.all ? '' : '',
-          ].filter(Boolean).join(', ')}</td>
+          ].filter(Boolean).join(' · ')}</td>
         </tr>`).join('')}
       </table>
       ${rows.some((r) => !r.day) ? '<p class="cat-sub">“Not listed” means the course was added after the list was issued — check the announcement.</p>' : ''}
-      ${rows.some((r) => r.entry && r.entry.restricted) ? '<p class="cat-sub">Courses marked with a class restriction keep it on every day; the catalog says which classes.</p>' : ''}
+      ${rows.some((r) => r.entry && r.entry.restricted) ? '<p class="cat-sub">⚠ Rows marked <b>restricted</b> carry a class restriction for the whole registration period — every day, not just the day shown here. The course catalog says exactly which classes/levels are allowed; the day badge alone isn\'t enough for these.</p>' : ''}
       ${standing.value ? `<p class="cat-sub">${esc(STANDING_LABELS[standing.value])}${standing.auto ? ` (${standing.earned} SU credits)` : ' — set in the Plan tab'}.${senior ? ` On day one you can also take your programme's required and core courses${currentProgram() ? ' — they are moved to day 1 above' : ' (pick your programme in the Plan tab to see which)'}` : ''}</p>`
         : '<p class="cat-sub">Set your class standing in the Plan tab to see if you get day-one senior registration.</p>'}
       ${(() => {
