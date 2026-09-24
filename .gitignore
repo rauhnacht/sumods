@@ -6,3 +6,4 @@ node_modules/
 courses/
 sitemap.xml
 robots.txt
+.DS_Store
