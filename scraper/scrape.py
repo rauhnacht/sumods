@@ -63,6 +63,17 @@ def term_name(code: str) -> str:
     return f"{season} {year}-{year + 1}"
 
 
+def active_term_code(today: dt.date | None = None) -> str:
+    """The term whose classes are actually running today (no lookahead) — for scripts that
+    track something live, like seats or finals, where "current" must mean "in session now",
+    not "highest term code we've seen" (a soon-to-open term already listed in BannerWeb's
+    dropdown sorts higher, but hasn't started and has nothing live to track yet)."""
+    today = today or dt.date.today()
+    y, m = today.year, today.month
+    year, part = (y, 1) if m >= 8 else (y - 1, 2) if m <= 4 else (y - 1, 3)
+    return f"{year}{part:02d}"
+
+
 def current_terms(n: int, today: dt.date | None = None) -> list[str]:
     """Fallback when the term list can't be read: derive codes from the date.
 
@@ -365,7 +376,9 @@ def make_session():
 
     s = requests.Session()
     s.headers.update({"User-Agent": USER_AGENT})
-    retry = Retry(total=4, backoff_factor=3, status_forcelist=(429, 500, 502, 503, 504),
+    # total=3, backoff_factor=1 -> retries at ~0s/1s/2s, so a dead endpoint fails in seconds
+    # rather than minutes; still enough to ride out a genuine transient blip.
+    retry = Retry(total=3, backoff_factor=1, status_forcelist=(429, 500, 502, 503, 504),
                   allowed_methods=frozenset(["GET", "POST"]))
     s.mount("https://", HTTPAdapter(max_retries=retry))
     return s

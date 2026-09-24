@@ -28,7 +28,22 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from scrape import clean, make_session  # noqa: E402
+from scrape import clean, make_session, active_term_code  # noqa: E402
+
+
+def default_term(index: dict, data_dir) -> str:
+    """The term that's actually running now, if we have data for it; else the newest listed.
+
+    A term can appear in BannerWeb's dropdown (and so in terms.json, sorted by code) before
+    its classes start — e.g. next Spring shows up while this Fall is still in session, and
+    its higher code would otherwise look like "the current term" by pure sorting. That's
+    wrong for anything tracking something live, like seats or finals.
+    """
+    codes = {t["code"] for t in index["terms"]}
+    active = active_term_code()
+    if active in codes and (data_dir / f"{active}.json").exists():
+        return active
+    return index["terms"][0]["code"]
 
 DETAIL_URL = "https://suis.sabanciuniv.edu/prod/bwckschd.p_disp_detail_sched?term_in={term}&crn_in={crn}"
 ROW_LABELS = {"seats": "seats", "waitlist seats": "waitlist", "cross list seats": "crosslist"}
@@ -85,7 +100,7 @@ def main(argv=None) -> int:
 
     data_dir = Path(args.data)
     index = json.loads((data_dir / "terms.json").read_text(encoding="utf-8"))
-    term = args.term or index["terms"][0]["code"]
+    term = args.term or default_term(index, data_dir)
     out_path = data_dir / f"{term}-seats.json"
     previous = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else None
 
