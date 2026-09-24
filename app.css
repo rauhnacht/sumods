@@ -328,6 +328,10 @@ main { padding: 14px max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-a
 .comp-row select { width: 100%; }
 .course-note { font-size: 12.5px; color: var(--ink-3); margin-top: 7px; }
 .course-note.clash { color: var(--clash); font-weight: 600; }
+.course-note.muted { color: var(--ink-3); font-size: 12.5px; }
+.note-action { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: inherit; text-decoration: underline; cursor: pointer; }
+.course-note.clash .note-action { color: var(--clash); }
+.course-note.muted .note-action { color: var(--accent); }
 
 .empty-note { color: var(--ink-3); font-size: 14px; padding: 14px 2px; }
 

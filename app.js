@@ -476,7 +476,7 @@ function courseCombos(course, opts = {}) {
         combos.push({
           sel, sections, meetings: sections.flatMap((s) => s.meetings),
           penalty: comboPenalty(course, sections),
-          full: sections.filter((s) => { const seat = seatInfo(s.crn); return seat && seat.remaining <= 0; }).length,
+          full: isWaivedFull(course.code) ? 0 : sections.filter((s) => { const seat = seatInfo(s.crn); return seat && seat.remaining <= 0; }).length,
         });
         return;
       }
@@ -601,6 +601,17 @@ function selectSection(code, type, crn, { quiet = false } = {}) {
     const extra = moved.length ? ` — ${moved.join(', ')} moved to match` : '';
     toast(`${sec.component.code} ${sec.group}${extra}`, { action: 'Undo', onAction: undo });
   }
+}
+
+const isWaivedClash = (code) => !!(tt().courses[code] && tt().courses[code].waiveClash);
+const isWaivedFull = (code) => !!(tt().courses[code] && tt().courses[code].waiveFull);
+
+function setWaive(code, key, value) {
+  const e = tt().courses[code];
+  if (!e) return;
+  if (value) e[key] = true; else delete e[key];
+  save();
+  render();
 }
 
 function customEvents() {
@@ -836,7 +847,9 @@ function swapPatterns(code, type) {
 function renderTimetable() {
   const host = $('#grid');
   const blocks = planBlocks();
-  const { ids, pairs } = computeClashes(blocks);
+  const raw = computeClashes(blocks);
+  const pairs = raw.pairs.filter(([a, b]) => !(a.courseCode && isWaivedClash(a.courseCode)) && !(b.courseCode && isWaivedClash(b.courseCode)));
+  const ids = new Set(pairs.flatMap(([a, b]) => [a.id, b.id]));
   blocks.forEach((b) => { if (ids.has(b.id)) b.cls = `${b.cls || ''} clash`.trim(); });
 
   let all = blocks;
@@ -896,10 +909,30 @@ function renderTimetable() {
   renderSummary(pairs);
   renderRegDays();
   renderFinals();
-  renderCourseList(pairs);
+  renderCourseList(raw.pairs);
 }
 
 /** Which day of registration a course opens for the student's programme(s). */
+const STANDING_LABELS = { freshman: 'Freshman', sophomore: 'Sophomore', junior: 'Junior', senior: 'Senior' };
+
+function creditsToStanding(credits) {
+  if (credits >= 94) return 'senior';
+  if (credits >= 64) return 'junior';
+  if (credits >= 34) return 'sophomore';
+  return 'freshman';
+}
+
+/** Freshman/Sophomore/Junior/Senior. Auto from earned credits when a programme + graded
+ * courses are on record; otherwise whatever the student picked by hand in the Plan tab. */
+function classStanding() {
+  const plan = planState();
+  if (plan.program) {
+    const earned = earnedCredits(allPlanned());
+    if (earned > 0) return { value: creditsToStanding(earned), auto: true, earned };
+  }
+  return { value: plan.manualStanding || null, auto: false, earned: 0 };
+}
+
 function myPrograms() {
   const chosen = (store.prefs.programs || []).filter(Boolean);
   return chosen;
@@ -942,8 +975,8 @@ function renderRegDays() {
   }
   rows.sort((a, b) => (a.day || 9) - (b.day || 9) || naturalKey(a.code).localeCompare(naturalKey(b.code)));
 
-  const earned = store.plan ? earnedCredits(allPlanned()) : 0;
-  const senior = earned >= 94;
+  const standing = classStanding();
+  const senior = standing.value === 'senior';
   const dayOne = senior ? seniorDayOneCodes() : new Set();
   rows.forEach((row) => {
     if (dayOne.has(row.code) && row.day !== 1) { row.day = 1; row.senior = true; }
@@ -976,7 +1009,8 @@ function renderRegDays() {
       </table>
       ${rows.some((r) => !r.day) ? '<p class="cat-sub">“Not listed” means the course was added after the list was issued — check the announcement.</p>' : ''}
       ${rows.some((r) => r.entry && r.entry.restricted) ? '<p class="cat-sub">Courses marked with a class restriction keep it on every day; the catalog says which classes.</p>' : ''}
-      ${senior ? `<p class="cat-sub">You have senior standing (94+ credits), so on day one you can also take your programme's required and core courses${currentProgram() ? ' — they are moved to day 1 above' : ' (pick your programme in the Plan tab to see which)'}.</p>` : ''}
+      ${standing.value ? `<p class="cat-sub">${esc(STANDING_LABELS[standing.value])}${standing.auto ? ` (${standing.earned} SU credits)` : ' — set in the Plan tab'}.${senior ? ` On day one you can also take your programme's required and core courses${currentProgram() ? ' — they are moved to day 1 above' : ' (pick your programme in the Plan tab to see which)'}` : ''}</p>`
+        : '<p class="cat-sub">Set your class standing in the Plan tab to see if you get day-one senior registration.</p>'}
       ${(() => {
         const todayIndex = App.calendar && App.calendar.registrationDays ? App.calendar.registrationDays.indexOf(istanbulToday()) : -1;
         if (todayIndex < 0) return '';
@@ -1052,7 +1086,7 @@ function sectionOptionLabel(sec) {
   return `${sec.group}: ${when}${who} (${sec.crn})${left}`;
 }
 
-function renderCourseList(pairs) {
+function renderCourseList(rawPairs) {
   const host = $('#course-list');
   const t = tt();
   const events = customEvents();
@@ -1068,7 +1102,7 @@ function renderCourseList(pairs) {
     return;
   }
   const clashText = new Map();
-  for (const [a, b] of pairs) {
+  for (const [a, b] of rawPairs) {
     for (const [x, y] of [[a, b], [b, a]]) {
       if (!x.courseCode) continue;
       const line = `${y.code}${y.group ? ` ${y.group}` : ''} on ${DAYS[x.day]} ${hhmm(Math.max(x.start, y.start))}`;
@@ -1096,8 +1130,10 @@ function renderCourseList(pairs) {
     const who = mainInstructors(course, e);
     const clashes = clashText.get(code);
     const mismatch = linkMismatch(course, e);
-    const fullSections = course.components.map((comp) => App.idx.byCrn.get(e.sel[comp.type]))
+    const allFull = course.components.map((comp) => App.idx.byCrn.get(e.sel[comp.type]))
       .filter((s) => s && seatInfo(s.crn) && seatInfo(s.crn).remaining <= 0);
+    const fullWaived = isWaivedFull(code);
+    const clashWaived = isWaivedClash(code);
     return `<div class="course c${e.color}${e.hidden ? ' hidden-course' : ''}" data-code="${esc(code)}">
       <div class="course-top">
         <button class="swatch" type="button" data-act="palette" aria-label="Change colour"></button>
@@ -1116,8 +1152,12 @@ function renderCourseList(pairs) {
       ${rows}
       ${who ? `<div class="course-note">${esc(who)}</div>` : ''}
       ${mismatch ? `<div class="course-note warn">${esc(mismatch)}</div>` : ''}
-      ${fullSections.length ? `<div class="course-note clash">${esc(fullSections.map((s) => `${s.component.code} ${s.group}`).join(', '))} ${fullSections.length === 1 ? 'is' : 'are'} full — pick another section or watch for drops.</div>` : ''}
-      ${clashes ? `<div class="course-note clash">Clashes with ${esc([...clashes].join('; '))}</div>` : ''}
+      ${allFull.length && !fullWaived ? `<div class="course-note clash">${esc(allFull.map((s) => `${s.component.code} ${s.group}`).join(', '))} ${allFull.length === 1 ? 'is' : 'are'} full — pick another section, watch for drops,
+        or <button type="button" class="note-action" data-waive-full="${esc(code)}">ignore this</button> if you have an override.</div>` : ''}
+      ${allFull.length && fullWaived ? `<div class="course-note muted">Full section ignored — <button type="button" class="note-action" data-unwaive-full="${esc(code)}">show the warning again</button>.</div>` : ''}
+      ${clashes && !clashWaived ? `<div class="course-note clash">Clashes with ${esc([...clashes].join('; '))} —
+        <button type="button" class="note-action" data-waive-clash="${esc(code)}">waive this</button> if you have permission to keep it.</div>` : ''}
+      ${clashes && clashWaived ? `<div class="course-note muted">Time conflict waived — <button type="button" class="note-action" data-unwaive-clash="${esc(code)}">show the warning again</button>.</div>` : ''}
     </div>`;
   }).join('');
   host.innerHTML = html;
@@ -1729,6 +1769,16 @@ function renderPlanner() {
     <div class="filters">
       <select class="select" id="plan-program" aria-label="Programme">${programOptions}</select>
       ${entryOptions ? `<select class="select" id="plan-entry" aria-label="Entry term">${entryOptions}</select>` : ''}
+      ${(() => {
+        const standing = classStanding();
+        if (standing.auto) return `<span class="stat">${esc(STANDING_LABELS[standing.value])} (${standing.earned} SU credits)</span>`;
+        return `<label class="reg-pick">Class standing
+          <select class="select" id="plan-standing" aria-label="Class standing">
+            <option value="">—</option>
+            ${Object.entries(STANDING_LABELS).map(([v, label]) =>
+              `<option value="${v}"${v === plan.manualStanding ? ' selected' : ''}>${label}</option>`).join('')}
+          </select></label>`;
+      })()}
       <button class="btn" type="button" id="plan-import">Import transcript</button>
       ${program && program.suggested ? '<button class="btn" type="button" id="plan-fill">Fill suggested plan</button>' : ''}
       <button class="btn quiet" type="button" id="plan-clear">Clear plan</button>
@@ -2256,19 +2306,29 @@ function optimise(opts) {
 
   const add = (cb) => {
     let extra = 0;
+    const waived = isWaivedClash(cb.code);
+    const pushed = [];
     for (const m of cb.meetings) {
-      for (const o of dayBusy[m.day]) if (m.start < o.end && o.start < m.end) extra += 1;
-      dayBusy[m.day].push(m);
+      if (!waived) {
+        for (const o of dayBusy[m.day]) if (!o._waived && m.start < o.end && o.start < m.end) extra += 1;
+      }
+      // only clone when the flag actually differs from the shared meeting object, so remove()
+      // below can still find and splice out the exact reference it pushed
+      const wrapped = waived ? { ...m, _waived: true } : m;
+      dayBusy[m.day].push(wrapped);
+      pushed.push(wrapped);
     }
     clashes += extra;
+    cb._pushed = pushed;
     return extra;
   };
   const remove = (cb, extra) => {
-    for (const m of cb.meetings) {
+    for (const m of cb._pushed) {
       const list = dayBusy[m.day];
       const i = list.indexOf(m);
       if (i >= 0) list.splice(i, 1);
     }
+    cb._pushed = null;
     clashes -= extra;
   };
 
@@ -2990,6 +3050,14 @@ function bindEvents() {
     const host = e.target.closest('.course');
     if (!host) return;
     const code = host.dataset.code;
+    const waive = e.target.closest('[data-waive-full], [data-unwaive-full], [data-waive-clash], [data-unwaive-clash]');
+    if (waive) {
+      if (waive.dataset.waiveFull !== undefined) setWaive(code, 'waiveFull', true);
+      else if (waive.dataset.unwaiveFull !== undefined) setWaive(code, 'waiveFull', false);
+      else if (waive.dataset.waiveClash !== undefined) setWaive(code, 'waiveClash', true);
+      else if (waive.dataset.unwaiveClash !== undefined) setWaive(code, 'waiveClash', false);
+      return;
+    }
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'info') openCourseDialog(code);
     else if (act === 'remove') removeCourse(code);
@@ -3227,6 +3295,7 @@ function bindEvents() {
       refreshRequirements();
     }
     if (e.target.id === 'plan-entry') { planState().entry = e.target.value; save(); refreshRequirements(); }
+    if (e.target.id === 'plan-standing') { planState().manualStanding = e.target.value || null; save(); renderPlanner(); }
     const grade = e.target.closest('[data-grade]');
     if (grade) {
       const id = grade.closest('[data-term]').dataset.term;
