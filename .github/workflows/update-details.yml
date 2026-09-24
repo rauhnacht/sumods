@@ -16,9 +16,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: sumods-data-write
+  cancel-in-progress: false
+
 jobs:
   details:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,6 +46,7 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add data
             git commit -m "data: course details $(date -u +%Y-%m-%d)"
+            git pull --rebase
             git push
           else
             echo "No changes."

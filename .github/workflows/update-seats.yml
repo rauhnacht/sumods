@@ -4,19 +4,20 @@ name: Update seats
 # (dates from data/<term>-calendar.json) and once a day otherwise.
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/15 * * * *"   # every 15 min; --auto below keeps this to once a day outside registration/add-drop
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: seats
+  group: sumods-data-write
   cancel-in-progress: false
 
 jobs:
   seats:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
