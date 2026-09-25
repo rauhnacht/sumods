@@ -1861,6 +1861,12 @@ function requirementBlockHTML(program, slot) {
       const label = parts.join(', ') || `${matches.length} courses`;
       const ratio = target ? Math.min(1, doneCredits / target) : targetCount ? Math.min(1, matches.length / targetCount) : 1;
       const earnedRatio = target ? Math.min(1, got / target) : 0;
+      if (group.untracked) {
+        return `<button type="button" class="req-card" data-open-req="${esc(slot)}:${i}">
+          <div class="req-top"><b>${esc(group.name)}</b><span>${target ? `${esc(target)} cr needed` : ''}${group.ects ? ` · ${esc(group.ects)} ECTS` : ''}</span></div>
+          <p class="req-missing">Which courses count is set per-course (see its syllabus) — not tracked automatically yet.</p>
+        </button>`;
+      }
       return `<button type="button" class="req-card" data-open-req="${esc(slot)}:${i}">
         <div class="req-top"><b>${esc(group.name)}</b><span>${esc(label)}</span></div>
         <div class="bar"><span style="width:${Math.round(ratio * 100)}%"></span>
@@ -1949,6 +1955,15 @@ function renderRequirementsDialog() {
     rowsHTML = matches.length
       ? matches.map((m) => poolRow(m.code, courseStatus(m.code), courseFacts(m).title, [m.code])).join('')
       : '<p class="empty-note">Nothing assigned here yet — a qualifying course you add to your plan will show up.</p>';
+  }
+
+  if (group.untracked) {
+    $('#req-dlg-body').innerHTML = `
+      <p class="cat-sub">${esc(parts.filter((p) => !p.startsWith('0/')).join(', ') || (target ? `${target} cr needed` : ''))}</p>
+      <p class="empty-note">Sabancı doesn't publish a fixed course list for this one — whether a course
+        counts is stated on that course's own syllabus. SUMods can't check that automatically yet, so this
+        requirement isn't tracked against your plan; the credit target above is the only thing we know.</p>`;
+    return;
   }
 
   $('#req-dlg-body').innerHTML = `

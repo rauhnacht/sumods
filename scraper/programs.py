@@ -36,6 +36,16 @@ from scrape import clean, make_session, term_name  # noqa: E402
 
 URL = ("https://suis.sabanciuniv.edu/HbbmWeb/SU_DEGREE.p_degree_detail"
        "?P_TERM={term}&P_PROGRAM={program}&P_SUBMIT=&P_LANG=EN&P_LEVEL=UG")
+
+# The summary page names each area's minimum credits/ECTS but not which courses satisfy it —
+# that list lives on this separate endpoint, one call per area. P_AREA is "<PROGRAM>_<suffix>"
+# for a programme's own electives, or "FC_<school>" + P_FAC for the cross-faculty pool.
+AREA_URL = ("https://suis.sabanciuniv.edu/HbbmWeb/SU_DEGREE.p_list_courses"
+            "?P_TERM={term}&P_AREA={area}&P_PROGRAM={program}&P_LANG=EN&P_LEVEL=UG")
+AREA_SUFFIX = {"core": "CEL", "area": "ARE", "free": "FRE"}
+# FC_SOM is what the actual degree-detail page links to for the business school's courses;
+# FC_SBS is tried as a fallback in case a different programme or term uses that code instead.
+FACULTY_AREAS = [("FC_FENS", "E"), ("FC_FASS", "S"), ("FC_SOM", "M"), ("FC_SBS", "M")]
 PROGRAMS = {
     "BSCS": "Computer Science and Engineering",
     "BSEE": "Electronics Engineering",
@@ -60,6 +70,10 @@ KINDS = [
     ("free", ("free elective", "free electives", "serbest seçmeli")),
     ("faculty", ("faculty course", "faculty courses", "fakülte dersleri")),
     ("philosophy", ("philosophy elective", "philosophy electives")),
+    # these two are credit/ECTS *floors* the required+core+area courses must add up to, not
+    # areas with their own course list — see basic_science_engineering_note() below
+    ("basicscience", ("basic science", "basic science courses", "temel bilim")),
+    ("engineering", ("engineering", "engineering courses", "mühendislik")),
     ("total", ("total", "toplam")),
 ]
 
@@ -80,6 +94,32 @@ def numbers(cells: list[str]) -> list[float]:
             v = float(m.group(1).replace(",", "."))
             out.append(int(v) if v == int(v) else v)
     return out
+
+
+def parse_area_courses(html: str) -> list[str]:
+    """A p_list_courses page: just a table of courses for one requirement area. Returns
+    codes in document order, deduplicated."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    seen: dict[str, None] = {}
+    for tr in soup.find_all("tr"):
+        cells = [clean(c.get_text(" ")) for c in tr.find_all(["th", "td"])]
+        code_cell = next((c for c in cells if CODE_RE.match(c)), None)
+        if not code_cell:
+            continue
+        m = CODE_RE.match(code_cell)
+        seen.setdefault(f"{m.group(1)} {m.group(2)}", None)
+    if not seen:
+        # some area pages are a bare list (no table) — fall back to scanning all text lines
+        for line in soup.get_text("\n").split("\n"):
+            line = clean(line)
+            m = CODE_RE.match(line)
+            if m:
+                seen.setdefault(f"{m.group(1)} {m.group(2)}", None)
+    return list(seen)
 
 
 def parse_page(html: str) -> dict:
@@ -116,6 +156,11 @@ def parse_page(html: str) -> dict:
         values = numbers(cells[1:])
         if kind and values and (in_summary or len(summary) < 12):
             entry = {"name": cells[0].strip(" *"), "kind": kind}
+            if kind in ("basicscience", "engineering"):
+                # the summary gives a credit/ECTS floor here, but which courses count toward
+                # it isn't listed anywhere on this page — the university says that's a
+                # property of the course itself (stated in its syllabus), not a fixed list
+                entry["untracked"] = True
             if columns:
                 for label, value in zip(columns[1:], cells[1:]):
                     n = numbers([value])
@@ -210,14 +255,59 @@ def digest(entry: dict) -> str:
     return hashlib.sha1(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:12]
 
 
+def fill_area_courses(session, term: str, program: str, groups: list[dict], delay: float) -> None:
+    """The degree-detail summary names each area's credit/ECTS floor but not its courses —
+    fetch that list from p_list_courses for core/area/free, and merge FENS+FASS+business for
+    a faculty-courses group. Only fills groups that came back empty from the summary page."""
+    for group in groups:
+        if group.get("courses"):
+            continue
+        if group["kind"] in AREA_SUFFIX:
+            area = f"{program}_{AREA_SUFFIX[group['kind']]}"
+            url = AREA_URL.format(term=term, area=area, program=program)
+            try:
+                res = session.get(url, timeout=45)
+                res.raise_for_status()
+                group["courses"] = parse_area_courses(res.text)
+                print(f"    {group['kind']}: {len(group['courses'])} courses ({area})")
+            except Exception as exc:
+                print(f"    {group['kind']} area failed: {exc}", file=sys.stderr)
+            time.sleep(delay)
+        elif group["kind"] == "faculty":
+            codes: dict[str, None] = {}
+            done: set[str] = set()
+            for area, fac in FACULTY_AREAS:
+                if fac in done:
+                    continue
+                url = f"{AREA_URL.format(term=term, area=area, program=program)}&P_FAC={fac}"
+                try:
+                    res = session.get(url, timeout=45)
+                    res.raise_for_status()
+                    found = parse_area_courses(res.text)
+                    if found:
+                        done.add(fac)
+                        for c in found:
+                            codes.setdefault(c, None)
+                except Exception as exc:
+                    print(f"    faculty area {area} failed: {exc}", file=sys.stderr)
+                time.sleep(delay)
+            group["courses"] = list(codes)
+            print(f"    faculty: {len(group['courses'])} courses across {len(done)}/3 schools")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--programs", nargs="*", default=list(PROGRAMS), help="programme codes, e.g. BSEE BSMAT")
     ap.add_argument("--entries", nargs="*", help="entry terms (default: fall + spring since 2019)")
     ap.add_argument("--data", default=str(Path(__file__).resolve().parent.parent / "data"))
     ap.add_argument("--delay", type=float, default=1.0)
-    ap.add_argument("--html", help="parse a saved page (with one --programs and one --entries)")
+    ap.add_argument("--no-areas", action="store_true",
+                    help="skip the extra per-area fetches for core/area/free/faculty course lists")
+    ap.add_argument("--html", help="parse a saved degree_detail page (summary + inline lists)")
+    ap.add_argument("--area-html", help="parse a saved p_list_courses page and print the course codes found")
     ap.add_argument("--dump", help="save the first fetched page here and stop")
+    ap.add_argument("--dump-area", help="fetch one area's page (needs --programs/--entries and "
+                    "--dump-area = core|area|free|faculty) and save it here, then stop")
     ap.add_argument("--print", action="store_true", help="show what was parsed, write nothing")
     args = ap.parse_args(argv)
 
@@ -232,6 +322,26 @@ def main(argv=None) -> int:
         print(json.dumps({**parsed, "credits": dict(list(parsed["credits"].items())[:8])},
                          ensure_ascii=False, indent=1)[:5000])
         return 0 if parsed["groups"] else 1
+
+    if args.area_html:
+        codes = parse_area_courses(Path(args.area_html).read_text(encoding="utf-8", errors="replace"))
+        print(f"{len(codes)} courses: {codes}")
+        return 0 if codes else 1
+
+    if args.dump_area:
+        program = args.programs[0]
+        term = (args.entries or [default_entries(newest)[0]])[0]
+        session = make_session()
+        if args.dump_area == "faculty":
+            url = f"{AREA_URL.format(term=term, area='FC_FENS', program=program)}&P_FAC=E"
+        else:
+            area = f"{program}_{AREA_SUFFIX[args.dump_area]}"
+            url = AREA_URL.format(term=term, area=area, program=program)
+        res = session.get(url, timeout=45)
+        Path(args.dump).write_text(res.text, encoding="utf-8") if args.dump else print(res.text[:3000])
+        if args.dump:
+            print(f"saved {args.dump} ({url})")
+        return 0
 
     session = make_session()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -258,6 +368,8 @@ def main(argv=None) -> int:
             if not parsed["groups"]:
                 print("  no requirements on that page (programme not open to that entry term?)")
                 continue
+            if not args.no_areas:
+                fill_area_courses(session, entry_term, program, parsed["groups"], args.delay)
             entry = {"groups": parsed["groups"], "credits": parsed["credits"],
                      "totalCredits": parsed["totalCredits"], "totalEcts": parsed["totalEcts"], "source": url}
             h = digest({k: v for k, v in entry.items() if k != "source"})

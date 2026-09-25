@@ -306,6 +306,28 @@ headings that name an area, and course codes in the rows after them — whether 
 are table rows, bold text or `<h4>`s. If a real page comes back empty, `--dump` + `--html`
 shows what it saw.
 
+Core/Area/Free Electives and cross-faculty courses don't list their courses on this page at
+all — only the credit/ECTS floor. Their actual course lists live on a second endpoint, one
+call per area, which `fill_area_courses()` fetches automatically for whichever groups came
+back empty:
+
+```
+SU_DEGREE.p_list_courses?P_TERM=<entry>&P_AREA=<PROGRAM>_CEL&P_PROGRAM=<PROGRAM>&P_LANG=EN&P_LEVEL=UG   # Core
+...&P_AREA=<PROGRAM>_ARE...   # Area          ...&P_AREA=<PROGRAM>_FRE...   # Free
+...&P_AREA=FC_FENS&P_FAC=E... / FC_FASS&P_FAC=S... / FC_SOM|FC_SBS&P_FAC=M...   # Faculty (merged)
+```
+
+`--no-areas` skips these extra fetches (faster, for a quick structural check); `--area-html`
+parses a saved area page standalone; `--dump-area core|area|free|faculty` (with `--programs`/
+`--entries` set) fetches just one area and saves or prints it.
+
+Basic Science and Engineering appear on the summary as their own ECTS floors, not areas with a
+course list — which courses count toward them isn't on this page; the university notes it's a
+property of the course itself (its syllabus). Rather than guess, these two show as "not tracked"
+in the requirements panel (the credit target is shown, nothing is silently marked complete or
+incomplete) until that per-course flag is wired up — see courseInfo() / details.py if a syllabus
+turns out to state it explicitly, which would let this become a real tracked group like the others.
+
 ### Manual corrections: `data/programs/overrides.json`
 
 A degree page lists courses, not policy footnotes — something like "either EE 321 or CS 303

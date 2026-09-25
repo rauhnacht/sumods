@@ -63,6 +63,64 @@ def test_seats_page():
     assert seats.parse_detail("<html><body>no table</body></html>") is None
 
 
+def test_area_courses_parser():
+    import programs
+    codes = programs.parse_area_courses((HERE / "fixture_area_courses.html").read_text(encoding="utf-8"))
+    assert codes == ["EE 311", "EE 313", "EE 401", "CS 412"], codes
+
+
+def test_fill_area_courses():
+    import programs
+
+    calls = []
+
+    class FakeResp:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            pass
+
+    class FakeSession:
+        def get(self, url, timeout=None):
+            calls.append(url)
+            if "FAC=E" in url:
+                return FakeResp("<table><tr><td>MATH 305</td></tr></table>")
+            if "FAC=S" in url:
+                return FakeResp("<table><tr><td>HUM 207</td></tr></table>")
+            if "FC_SOM" in url:
+                return FakeResp("")
+            if "FC_SBS" in url:
+                return FakeResp("<table><tr><td>ECON 301</td></tr></table>")
+            if "BSEE_CEL" in url:
+                return FakeResp("<table><tr><td>EE 311</td></tr><tr><td>EE 313</td></tr></table>")
+            if "BSEE_ARE" in url:
+                return FakeResp("<table><tr><td>EE 401</td></tr></table>")
+            return FakeResp("")
+
+    groups = [
+        {"name": "Core Electives", "kind": "core", "courses": []},
+        {"name": "Area Electives", "kind": "area", "courses": []},
+        {"name": "Free Electives", "kind": "free", "courses": []},
+        {"name": "Faculty Courses", "kind": "faculty", "courses": []},
+        {"name": "Required Courses", "kind": "required", "courses": ["EE 202"]},  # already filled -> must be left alone
+    ]
+    programs.fill_area_courses(FakeSession(), "202401", "BSEE", groups, delay=0)
+    by_kind = {g["kind"]: g["courses"] for g in groups}
+    assert by_kind["core"] == ["EE 311", "EE 313"]
+    assert by_kind["area"] == ["EE 401"]
+    assert by_kind["free"] == []                                    # genuinely empty area: no crash, stays empty
+    assert set(by_kind["faculty"]) == {"MATH 305", "HUM 207", "ECON 301"}   # FC_SOM empty -> FC_SBS fallback used
+    assert by_kind["required"] == ["EE 202"]                         # never re-fetched once already populated
+    assert not any("BSEE_REQ" in c for c in calls)                   # confirms it really was skipped, not just coincidence
+
+
+def test_kind_of_basic_science_engineering():
+    import programs
+    assert programs.kind_of("Basic Science Courses") == "basicscience"
+    assert programs.kind_of("Engineering") == "engineering"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
