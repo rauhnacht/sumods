@@ -17,7 +17,7 @@ concurrency:
 jobs:
   seats:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25   # safety net only; seats.py stops itself after --budget (11 min) and saves
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
