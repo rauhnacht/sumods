@@ -265,11 +265,14 @@ def fill_area_courses(session, term: str, program: str, groups: list[dict], dela
         if group["kind"] in AREA_SUFFIX:
             area = f"{program}_{AREA_SUFFIX[group['kind']]}"
             url = AREA_URL.format(term=term, area=area, program=program)
+            referer = URL.format(term=term, program=program)   # this old-style page may check it
             try:
-                res = session.get(url, timeout=45)
+                res = session.get(url, timeout=45, headers={"Referer": referer})
                 res.raise_for_status()
                 group["courses"] = parse_area_courses(res.text)
-                print(f"    {group['kind']}: {len(group['courses'])} courses ({area})")
+                note = f"{len(group['courses'])} courses" if group["courses"] \
+                    else f"0 courses in a {len(res.text)}-byte response"
+                print(f"    {group['kind']}: {note} ({area})")
             except Exception as exc:
                 print(f"    {group['kind']} area failed: {exc}", file=sys.stderr)
             time.sleep(delay)
@@ -280,8 +283,9 @@ def fill_area_courses(session, term: str, program: str, groups: list[dict], dela
                 if fac in done:
                     continue
                 url = f"{AREA_URL.format(term=term, area=area, program=program)}&P_FAC={fac}"
+                referer = URL.format(term=term, program=program)
                 try:
-                    res = session.get(url, timeout=45)
+                    res = session.get(url, timeout=45, headers={"Referer": referer})
                     res.raise_for_status()
                     found = parse_area_courses(res.text)
                     if found:

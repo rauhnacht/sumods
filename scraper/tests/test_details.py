@@ -82,7 +82,7 @@ def test_fill_area_courses():
             pass
 
     class FakeSession:
-        def get(self, url, timeout=None):
+        def get(self, url, timeout=None, headers=None):
             calls.append(url)
             if "FAC=E" in url:
                 return FakeResp("<table><tr><td>MATH 305</td></tr></table>")
