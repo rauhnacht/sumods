@@ -83,13 +83,30 @@ def in_window(calendar: dict, today: dt.date) -> bool:
     return False
 
 
+def fast_session(workers: int):
+    """Like scrape.make_session, but sized for many threads and quick to give up: one CRN
+    that won't answer shouldn't hold a worker for a minute — it keeps its previous value and
+    gets another chance next run."""
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+
+    session = make_session()
+    retry = Retry(total=1, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504),
+                  allowed_methods=frozenset(["GET"]))
+    session.mount("https://", HTTPAdapter(max_retries=retry, pool_connections=workers, pool_maxsize=workers))
+    return session
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--term", help="term code; defaults to the newest in data/terms.json")
+    ap.add_argument("--term", help="term code; defaults to the term in session")
     ap.add_argument("--crns", nargs="*", help="only these CRNs")
     ap.add_argument("--data", default=str(Path(__file__).resolve().parent.parent / "data"))
-    ap.add_argument("--rate", type=float, default=4.0, help="requests per second overall (default 4)")
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--rate", type=float, default=10.0, help="requests per second overall (default 10)")
+    ap.add_argument("--workers", type=int, default=16, help="parallel requests (default 16)")
+    ap.add_argument("--budget", type=float, default=11.0,
+                    help="minutes to spend before writing what we have (default 11; 0 = no limit)")
     ap.add_argument("--auto", action="store_true", help="only run in registration/add-drop windows or once a day")
     ap.add_argument("--html", help="parse a saved detail page and print the result")
     args = ap.parse_args(argv)
@@ -102,62 +119,88 @@ def main(argv=None) -> int:
     index = json.loads((data_dir / "terms.json").read_text(encoding="utf-8"))
     term = args.term or default_term(index, data_dir)
     out_path = data_dir / f"{term}-seats.json"
-    previous = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else None
+    previous = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else {}
+    now = dt.datetime.now(dt.timezone.utc)
 
     if args.auto:
         cal_path = data_dir / f"{term}-calendar.json"
         calendar = json.loads(cal_path.read_text(encoding="utf-8")) if cal_path.exists() else {}
-        now = dt.datetime.now(dt.timezone.utc)
         today = (now + dt.timedelta(hours=3)).date()          # Istanbul
-        last = dt.datetime.fromisoformat(previous["updated"].replace("Z", "+00:00")) if previous else None
-        if not in_window(calendar, today) and last and now - last < dt.timedelta(hours=23):
-            print("outside registration and add/drop, and refreshed within a day — skipping")
+        full = previous.get("fullPassAt")
+        full = dt.datetime.fromisoformat(full.replace("Z", "+00:00")) if full else None
+        if not in_window(calendar, today) and full and now - full < dt.timedelta(hours=23) and not previous.get("cursor"):
+            print("outside registration and add/drop, and a full pass finished within a day — skipping")
             return 0
 
     schedule = json.loads((data_dir / f"{term}.json").read_text(encoding="utf-8"))
-    crns = args.crns or [s["crn"] for c in schedule["courses"] for comp in c["components"] for s in comp["sections"]]
-    print(f"{term}: {len(crns)} sections")
+    everything = [s["crn"] for c in schedule["courses"] for comp in c["components"] for s in comp["sections"]]
+    # pick up where the last run stopped, so a pass that doesn't fit one run finishes over the next
+    cursor = 0 if args.crns else int(previous.get("cursor") or 0) % max(len(everything), 1)
+    crns = args.crns or (everything[cursor:] + everything[:cursor])
+    print(f"{term}: {len(crns)} sections, starting at #{cursor}, {args.workers} workers, "
+          f"{args.rate:g}/s, budget {args.budget:g} min")
 
-    session = make_session()
+    session = fast_session(args.workers)
     gap = 1.0 / max(args.rate, 0.1)
     lock = threading.Lock()
     clock = {"next": time.monotonic()}
-    seats: dict[str, list[int]] = dict(previous["seats"]) if previous and args.crns else {}
-    failures = 0
+    deadline = time.monotonic() + args.budget * 60 if args.budget > 0 else float("inf")
+    seats: dict[str, list[int]] = dict(previous.get("seats") or {})   # failures keep their last value
+    attempted = [False] * len(crns)
+    counts = {"ok": 0, "failed": 0}
+    started = time.monotonic()
 
-    def fetch(crn: str):
-        nonlocal failures
+    def fetch(i: int):
+        if time.monotonic() > deadline:
+            return
         with lock:
             wait = clock["next"] - time.monotonic()
             clock["next"] = max(clock["next"], time.monotonic()) + gap
         if wait > 0:
             time.sleep(wait)
+        if time.monotonic() > deadline:
+            return
+        attempted[i] = True
+        crn = crns[i]
         try:
-            res = session.get(DETAIL_URL.format(term=term, crn=crn), timeout=30)
+            res = session.get(DETAIL_URL.format(term=term, crn=crn), timeout=15)
             res.raise_for_status()
             parsed = parse_detail(res.text)
         except Exception as exc:
             with lock:
-                failures += 1
-            print(f"  {crn}: {exc}", file=sys.stderr)
+                counts["failed"] += 1
+            print(f"  {crn}: {str(exc)[:100]}", file=sys.stderr)
             return
-        if parsed:
-            row = parsed["seats"] + parsed.get("waitlist", [])
-            with lock:
-                seats[crn] = row
+        with lock:
+            if parsed:
+                seats[crn] = parsed["seats"] + parsed.get("waitlist", [])
+            counts["ok"] += 1
+            done = counts["ok"] + counts["failed"]
+            if done % 200 == 0:
+                rate = done / max(time.monotonic() - started, 0.001)
+                print(f"  {done}/{len(crns)} ({rate:.1f}/s)")
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        list(pool.map(fetch, crns))
+        list(pool.map(fetch, range(len(crns))))
 
+    reached = sum(attempted)
+    elapsed = time.monotonic() - started
     if not seats:
         print("no seat data came back", file=sys.stderr)
         return 1
-    out = {"schema": 1, "term": term,
-           "updated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = {"schema": 1, "term": term, "updated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
            "fields": ["capacity", "taken", "remaining", "waitCapacity", "waiting", "waitRemaining"],
-           "seats": seats}
+           "fullPassAt": previous.get("fullPassAt"), "cursor": 0, "seats": seats}
+    if not args.crns:
+        if reached >= len(crns):
+            out["fullPassAt"] = stamp
+        else:
+            out["cursor"] = (cursor + reached) % len(everything)
     out_path.write_text(json.dumps(out, separators=(",", ":")), encoding="utf-8")
-    print(f"{out_path}: {len(seats)} sections, {failures} failed")
+    print(f"{out_path}: {counts['ok']} refreshed, {counts['failed']} failed, "
+          f"{reached}/{len(crns)} reached in {elapsed / 60:.1f} min ({reached / max(elapsed, 0.001):.1f}/s)"
+          + ("" if reached >= len(crns) else f" — next run continues from #{out['cursor']}"))
     return 0
 
 

@@ -210,7 +210,7 @@ Availability" table. A browser can't read that page from another site, so there 
 in:
 
 - **The scraper** reads every CRN of the term into `data/<term>-seats.json`
-  (`python scraper/seats.py`, rate limited to 4 requests a second). The `update-seats`
+  (`python scraper/seats.py` — 16 parallel requests, capped at 10 a second; each run stops after an 11-minute budget, saves what it has, and the next run continues from where it stopped, so a slow BannerWeb day never loses work). The `update-seats`
   workflow runs it every 30 minutes; with `--auto` it only does the full pass during
   registration and add/drop and once a day otherwise, so BannerWeb isn't hammered for a
   number nobody is watching.
