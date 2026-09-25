@@ -829,7 +829,7 @@ function renderGrid(host, blocks, opts = {}) {
         const { cls, inner, label } = blockBody(b, size);
         html.push(`<button type="button" class="${cls}" data-block="${esc(b.id)}" aria-label="${esc(label)}"
           style="left:${((b.start - startMin) / span) * 100}%;width:${((b.end - b.start) / span) * 100}%;
-          top:calc(var(--lane) * ${lane} + 2px);height:calc(var(--lane) - 4px)">${inner}</button>`);
+          top:calc(var(--lane) * ${lane} + 3px);height:calc(var(--lane) - 6px)">${inner}</button>`);
       }
       if (showNow && day === now.day) html.push(`<div class="now-line" style="left:${((now.min - startMin) / span) * 100}%"></div>`);
       html.push('</div></div>');
@@ -857,7 +857,7 @@ function renderGrid(host, blocks, opts = {}) {
         const { cls, inner, label } = blockBody(b, size);
         html.push(`<button type="button" class="${cls}" data-block="${esc(b.id)}" aria-label="${esc(label)}"
           style="top:${(b.start - startMin) * ppm}px;height:${Math.max(16, h - 3)}px;
-          left:calc(${(lane / lanes) * 100}% + 2px);width:calc(${(1 / lanes) * 100}% - 4px)">${inner}</button>`);
+          left:calc(${(lane / lanes) * 100}% + 3px);width:calc(${(1 / lanes) * 100}% - 6px)">${inner}</button>`);
       }
       if (showNow && day === now.day) html.push(`<div class="now-line" style="top:${(now.min - startMin) * ppm}px"></div>`);
       html.push('</div>');
@@ -987,9 +987,20 @@ function classStanding() {
   return { value: plan.manualStanding || null, auto: false, earned: 0 };
 }
 
+/** BannerWeb's registration-days list uses short department codes (EE, MAT, CS…), not the
+ * programme codes the degree-requirement pages use (BSEE, BSMAT…). */
+const PROGRAM_SUBJECT = {
+  BSCS: 'CS', BSEE: 'EE', BSMAT: 'MAT', BSMS: 'IE', BSBIO: 'BIO', BSDSA: 'DSA', BSME: 'ME',
+  BAECON: 'ECON', BAVACD: 'VACD', BAPSIR: 'PSIR', BAPSY: 'PSY', BAMAN: 'MAN',
+};
+
+/** The registration-days programme picker defaults to whatever's chosen in the Plan tab
+ * (mapped to BannerWeb's short department codes) so the two don't drift apart; an explicit
+ * pick in the registration panel itself overrides that default. */
 function myPrograms() {
-  const chosen = (store.prefs.programs || []).filter(Boolean);
-  return chosen;
+  if (store.prefs.programs && store.prefs.programs.length) return store.prefs.programs.filter(Boolean);
+  const plan = planState();
+  return [PROGRAM_SUBJECT[plan.program], PROGRAM_SUBJECT[plan.program2]].filter(Boolean);
 }
 
 /**
@@ -1848,23 +1859,106 @@ function requirementBlockHTML(program, slot) {
       const label = parts.join(', ') || `${matches.length} courses`;
       const ratio = target ? Math.min(1, doneCredits / target) : targetCount ? Math.min(1, matches.length / targetCount) : 1;
       const earnedRatio = target ? Math.min(1, got / target) : 0;
-      const id = `${slot}:${i}`;
-      const open = App.openReqCards && App.openReqCards.has(id);
-      return `<div class="req-card${open ? ' open' : ''}" data-req-toggle="${esc(id)}">
+      return `<button type="button" class="req-card" data-open-req="${esc(slot)}:${i}">
         <div class="req-top"><b>${esc(group.name)}</b><span>${esc(label)}</span></div>
         <div class="bar"><span style="width:${Math.round(ratio * 100)}%"></span>
           ${earnedRatio ? `<i style="width:${Math.round(earnedRatio * 100)}%"></i>` : ''}</div>
         ${missing.length && missing.length <= 8 ? `<p class="req-missing">Left: ${missing.map((c) => esc(c)).join(', ')}</p>` : ''}
-        ${open ? `<div class="req-detail">${matches.length ? matches.map((m) => `
-            <div class="req-detail-row">
-              <span class="req-detail-code">${esc(m.code)}</span>
-              <span class="req-detail-title">${esc(courseFacts(m).title)}</span>
-              <span class="req-detail-term">${m.term ? esc(termLabel(m.term)) : ''}${m.grade ? ` · ${esc(m.grade)}` : ''}</span>
-              ${Array.isArray(m.slot) ? `<span class="req-detail-sub">counts in place of ${esc(m.slot.filter((c) => c !== m.code).join(', '))}</span>` : ''}
-            </div>`).join('') : '<p class="empty-note">Nothing assigned here yet.</p>'}
-          </div>` : ''}
-      </div>`;
+      </button>`;
     }).join('')}</div>`;
+}
+
+/** taken (graded, passing) / planned (in the plan, no grade yet) / failed (graded, not
+ * passing) / open (not in the plan at all) — the four states the requirements popup colours. */
+function courseStatus(code) {
+  const course = allPlanned().find((c) => c.code === code);
+  if (!course) return { state: 'open' };
+  if (!course.grade) return { state: 'planned', course };
+  if (FAILING_GRADES.includes(course.grade)) return { state: 'failed', course };
+  return { state: 'taken', course };
+}
+
+function bestSlotStatus(slot) {
+  const order = ['taken', 'planned', 'failed', 'open'];
+  const states = slotCodes(slot).map(courseStatus);
+  for (const s of order) {
+    const hit = states.find((x) => x.state === s);
+    if (hit) return hit;
+  }
+  return { state: 'open' };
+}
+
+const REQ_STATUS_LABEL = { taken: 'Taken', planned: 'Planned', failed: 'Not counted', open: 'Not taken' };
+
+function openRequirementsDialog(slot, groupIndex) {
+  const program = activePrograms()[slot === 'p1' ? 0 : 1];
+  if (!program) return;
+  App.reqDialog = { slot, groupIndex };
+  renderRequirementsDialog();
+  $('#dlg-requirements').showModal();
+}
+
+function renderRequirementsDialog() {
+  if (!App.reqDialog) return;
+  const { slot, groupIndex } = App.reqDialog;
+  const program = activePrograms()[slot === 'p1' ? 0 : 1];
+  if (!program) { $('#dlg-requirements').close(); return; }
+  const progress = requirementProgress(program);
+  const gi = Math.max(0, Math.min(groupIndex, progress.length - 1));
+  App.reqDialog.groupIndex = gi;
+  const { group, matches, doneCredits, earned: got, target, targetCount, ects } = progress[gi];
+
+  $('#req-dlg-title').textContent = program.name;
+  $('#req-tabs').innerHTML = progress.map((p, i) =>
+    `<button type="button" class="req-tab${i === gi ? ' active' : ''}" data-req-tab="${i}">${esc(p.group.name)}</button>`).join('');
+
+  const ratio = target ? Math.min(1, doneCredits / target) : targetCount ? Math.min(1, matches.length / targetCount) : 1;
+  const earnedRatio = target ? Math.min(1, got / target)
+    : targetCount ? Math.min(1, matches.filter((m) => courseStatus(m.code).state === 'taken').length / targetCount) : 0;
+  const parts = [];
+  if (target) parts.push(`${doneCredits}/${target} cr (${got} earned)`);
+  if (targetCount && (group.minCourses || !target)) parts.push(`${matches.length}/${targetCount} courses`);
+  if (group.ects && ects) parts.push(`${ects}/${group.ects} ECTS`);
+
+  const creditsMap = program.credits || {};
+  const creditsBadge = (codes) => {
+    const known = codes.map((c) => (creditsMap[c] || [])[0]).find((v) => v !== undefined) ?? group.creditsEach;
+    return known !== undefined ? `${known} SU` : '';
+  };
+  const poolRow = (labelCode, status, titleText, codes) => `<div class="req-pool-row req-pool-${status.state}">
+    <span class="req-pool-dot"></span>
+    <span class="req-pool-code">${esc(labelCode)}</span>
+    <span class="req-pool-title">${esc(titleText || '')}</span>
+    <span class="req-pool-credits">${esc(creditsBadge(codes))}</span>
+    <span class="req-pool-status">${esc(REQ_STATUS_LABEL[status.state])}${status.course && status.course.grade ? ` · ${esc(status.course.grade)}` : ''}</span>
+  </div>`;
+
+  let rowsHTML;
+  if (group.courses && group.courses.length) {
+    // a finite, listed requirement: show the whole pool, not just what the student has
+    rowsHTML = group.courses.map((slotItem) => {
+      const status = bestSlotStatus(slotItem);
+      const codes = slotCodes(slotItem);
+      const titleSource = status.course || (App.union && App.union.get(codes[0]));
+      return poolRow(slotLabel(slotItem), status, titleSource ? (titleSource.title || courseFacts(titleSource).title) : '', codes);
+    }).join('');
+  } else {
+    // area/free-elective style: unbounded pool, so show only what's actually assigned
+    rowsHTML = matches.length
+      ? matches.map((m) => poolRow(m.code, courseStatus(m.code), courseFacts(m).title, [m.code])).join('')
+      : '<p class="empty-note">Nothing assigned here yet — a qualifying course you add to your plan will show up.</p>';
+  }
+
+  $('#req-dlg-body').innerHTML = `
+    <p class="cat-sub">${esc(parts.join(', ') || `${matches.length} courses`)}</p>
+    <div class="bar req-pool-bar"><span style="width:${Math.round(ratio * 100)}%"></span>
+      ${earnedRatio ? `<i style="width:${Math.round(earnedRatio * 100)}%"></i>` : ''}</div>
+    <div class="req-pool-legend">
+      <span><i class="req-pool-dot req-pool-taken"></i>Taken</span>
+      <span><i class="req-pool-dot req-pool-planned"></i>Planned</span>
+      <span><i class="req-pool-dot req-pool-open"></i>Not taken</span>
+    </div>
+    <div class="req-pool-list">${rowsHTML}</div>`;
 }
 
 function renderPlanner() {
@@ -3261,6 +3355,10 @@ function bindEvents() {
 
   // dialogs
   $$('[data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
+  $('#dlg-requirements').addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-req-tab]');
+    if (tab) { App.reqDialog.groupIndex = Number(tab.dataset.reqTab); renderRequirementsDialog(); }
+  });
   $('#dlg-course').addEventListener('close', stopSeatsPolling);
   $('#dlg-crn').addEventListener('click', async (e) => {
     const row = e.target.closest('[data-crn]');
@@ -3394,12 +3492,10 @@ function bindEvents() {
 
   // planner
   $('#plan-body').addEventListener('click', (e) => {
-    const reqToggle = e.target.closest('[data-req-toggle]');
-    if (reqToggle) {
-      if (!App.openReqCards) App.openReqCards = new Set();
-      const key = reqToggle.dataset.reqToggle;
-      if (App.openReqCards.has(key)) App.openReqCards.delete(key); else App.openReqCards.add(key);
-      renderPlanner();
+    const openReq = e.target.closest('[data-open-req]');
+    if (openReq) {
+      const [slot, i] = openReq.dataset.openReq.split(':');
+      openRequirementsDialog(slot, Number(i));
       return;
     }
     const card = e.target.closest('[data-term]');

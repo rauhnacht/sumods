@@ -221,7 +221,7 @@ main { padding: 14px max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-a
 .tt-track {
   position: relative; height: calc(var(--lanes) * var(--lane));
   border-top: 1px solid var(--rule);
-  background-image: linear-gradient(to right, var(--rule) 1px, transparent 1px);
+  background-image: linear-gradient(to right, color-mix(in srgb, var(--rule) 70%, transparent) 1px, transparent 1px);
   background-size: calc(100% / var(--hours)) 100%;
 }
 .tt-row:last-child .tt-track { border-bottom: 1px solid var(--rule); }
@@ -236,32 +236,34 @@ main { padding: 14px max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-a
 .tt-vaxis span { position: absolute; right: 6px; font-size: 11px; color: var(--ink-3); transform: translateY(-6px); }
 .tt-vcol {
   position: relative; border-right: 1px solid var(--rule);
-  background-image: linear-gradient(to bottom, var(--rule) 1px, transparent 1px);
+  background-image: linear-gradient(to bottom, color-mix(in srgb, var(--rule) 70%, transparent) 1px, transparent 1px);
   background-size: 100% calc(60 * var(--ppm) * 1px);
 }
 .tt-vcol:last-child { border-right: 0; }
 
 .blk {
-  position: absolute; border: 0; border-radius: 7px; padding: 4px 6px; overflow: hidden;
+  position: absolute; border: 0; border-radius: 9px; padding: 4px 7px; overflow: hidden;
   text-align: left; display: block; background: var(--bg); color: var(--fg);
-  box-shadow: inset 0 0 0 1px var(--edge);
-  font-size: 12px; line-height: 1.22;
+  box-shadow: inset 0 0 0 1px var(--edge), 0 1px 2px rgba(19, 33, 60, .07);
+  font-size: 12px; line-height: 1.25;
 }
-.blk .b-code { display: block; font-weight: 700; font-stretch: 78%; letter-spacing: .01em; font-size: 12.5px; }
-.tt-v .blk { font-size: 11.5px; line-height: 1.16; padding: 3px 5px; }
+.blk .b-code {
+  display: block; font-weight: 700; font-stretch: 78%; letter-spacing: .01em; font-size: 12.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tt-v .blk { font-size: 11.5px; line-height: 1.2; padding: 3px 6px; }
 .tt-v .blk .b-code { font-size: 11.5px; }
 .blk.short .b-code, .blk.tiny .b-code { font-size: 11px; }
-.blk .b-grp { display: block; font-weight: 600; font-stretch: 84%; opacity: .92; }
-.blk .b-where { display: block; font-stretch: 78%; opacity: .78; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.blk .b-grp {
+  display: block; font-weight: 600; font-stretch: 84%; opacity: .85;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.blk .b-where { display: block; font-stretch: 78%; opacity: .72; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .blk.short .b-where { display: none; }
 .blk.tiny .b-grp, .blk.tiny .b-where { display: none; }
-.blk.clash { box-shadow: inset 0 0 0 2px var(--clash); }
-.blk.clash::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: 7px;
-  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--clash) 22%, transparent) 0 6px, transparent 6px 12px);
-}
-.blk.dim { opacity: .45; }
-.blk.active { box-shadow: inset 0 0 0 2px var(--accent); }
+.blk.clash { box-shadow: inset 0 0 0 2px var(--clash), 0 1px 3px rgba(19, 33, 60, .1); }
+.blk.dim { opacity: .4; }
+.blk.active { box-shadow: inset 0 0 0 2px var(--accent), 0 1px 3px rgba(19, 33, 60, .1); }
 .blk.ghost {
   background: color-mix(in srgb, var(--bg) 40%, var(--surface));
   border: 2px dashed color-mix(in srgb, var(--fg) 65%, transparent);
@@ -374,6 +376,35 @@ main { padding: 14px max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-a
 
 .req-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); margin-bottom: 16px; }
 .req-card { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; }
+.req-card { display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.req-card:hover { border-color: var(--accent); }
+
+.dlg-wide { width: min(640px, calc(100vw - 28px)); }
+.req-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 16px 10px; border-bottom: 1px solid var(--rule); }
+.req-tab { border: 0; background: var(--surface-2); border-radius: 7px; padding: 5px 10px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.req-tab.active { background: var(--accent); color: var(--accent-ink); }
+.req-pool-bar { margin: 8px 0; }
+.req-pool-legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 10px; }
+.req-pool-legend .req-pool-dot { display: inline-block; margin-right: 5px; }
+.req-pool-list { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 9px; overflow: hidden; }
+.req-pool-row { display: grid; grid-template-columns: 10px auto 1fr auto auto; align-items: center; gap: 9px; padding: 7px 10px; background: var(--surface); font-size: 13px; }
+.req-pool-credits { font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.req-pool-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
+.req-pool-code { font-weight: 700; font-stretch: 84%; white-space: nowrap; }
+.req-pool-title { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.req-pool-status { font-size: 11.5px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.req-pool-row.req-pool-taken .req-pool-dot { background: var(--ok); }
+.req-pool-row.req-pool-taken .req-pool-status { color: var(--ok); }
+.req-pool-row.req-pool-taken { background: color-mix(in srgb, var(--ok) 7%, var(--surface)); }
+.req-pool-row.req-pool-planned .req-pool-dot { background: var(--c2-ink); }
+.req-pool-row.req-pool-planned .req-pool-status { color: var(--c2-ink); }
+.req-pool-row.req-pool-planned { background: color-mix(in srgb, var(--c2-bg) 55%, var(--surface)); }
+.req-pool-row.req-pool-failed .req-pool-dot { background: var(--clash); }
+.req-pool-row.req-pool-failed .req-pool-status { color: var(--clash); }
+.req-pool-row.req-pool-open .req-pool-title { color: var(--ink-3); }
+.req-pool-legend .req-pool-taken { background: var(--ok); }
+.req-pool-legend .req-pool-planned { background: var(--c2-ink); }
+.req-pool-legend .req-pool-open { background: var(--ink-3); }
 .req-card { cursor: pointer; }
 .req-card:hover { border-color: var(--rule-2); }
 .req-card.open { border-color: var(--accent); }
