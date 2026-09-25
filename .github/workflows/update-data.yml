@@ -28,6 +28,7 @@ jobs:
       - run: pip install -r scraper/requirements.txt
 
       - name: Scrape BannerWeb
+        continue-on-error: true   # a BannerWeb hiccup shouldn't block a pending code deploy
         run: python -u scraper/scrape.py --latest 3
 
       - name: Final exam schedule (skipped if not published yet)
