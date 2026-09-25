@@ -891,7 +891,9 @@ function swapPatterns(code, type) {
   const patterns = new Map();
   for (const s of compatibleSections(course, comp, lecture)) {
     if (s.tba || !s.meetings.length) continue;
-    if (current && s.sig === current.sig) continue;
+    // exclude only the section already picked — a different section at the very same time
+    // (a different room/instructor CRN) is still a real alternative worth showing
+    if (current && s.crn === current.crn) continue;
     if (!patterns.has(s.sig)) patterns.set(s.sig, []);
     patterns.get(s.sig).push(s);
   }
@@ -3258,7 +3260,7 @@ function bindEvents() {
     if (b.kind === 'custom') { openEventDialog(b.custom.id); return; }
     if (App.swap && App.swap.code === b.courseCode && App.swap.type === b.type) { App.swap = null; render(); return; }
     if (!swapPatterns(b.courseCode, b.type).length) {
-      toast(`${b.code} has no other time slot`, { timeout: 2600 });
+      toast(`${b.code} has no other section to switch to`, { timeout: 2600 });
       return;
     }
     App.swap = { code: b.courseCode, type: b.type };
