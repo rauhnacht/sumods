@@ -122,6 +122,38 @@ def parse_area_courses(html: str) -> list[str]:
     return list(seen)
 
 
+SUFFIX_KIND = {"CEL": "core", "ARE": "area", "FRE": "free"}
+
+
+def area_links(soup) -> list[dict]:
+    """Every p_list_courses link on a degree page, with the area it belongs to. The page links
+    each area's course list itself, so its P_AREA/P_FAC codes are the real ones — no guessing
+    (programmes don't all name their areas <PROGRAM>_CEL/_ARE/_FRE; unknown codes 500)."""
+    from urllib.parse import parse_qs
+
+    out = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "p_list_courses" not in href:
+            continue
+        tail = href.split("p_list_courses", 1)[1].lstrip("?&")
+        query = parse_qs(tail)
+        area = (query.get("P_AREA") or [""])[0]
+        if not area:
+            continue
+        fac = (query.get("P_FAC") or [""])[0]
+        row = a.find_parent("tr")
+        label = clean(row.find(["td", "th"]).get_text(" ")) if row and row.find(["td", "th"]) else ""
+        kind = kind_of(label) or kind_of(clean(a.get_text(" ")))
+        if not kind:
+            if area.startswith("FC_"):
+                kind = "faculty"
+            else:
+                kind = SUFFIX_KIND.get(area.rsplit("_", 1)[-1])
+        out.append({"area": area, "fac": fac, "kind": kind, "label": label})
+    return out
+
+
 def parse_page(html: str) -> dict:
     """Summary table plus one course list per area, in document order."""
     from bs4 import BeautifulSoup
@@ -236,7 +268,7 @@ def parse_page(html: str) -> dict:
         if g["kind"] == "free" and not g["courses"]:
             g["any"] = True
     total = next((s for s in summary if s["kind"] == "total"), {})
-    return {"title": title, "groups": ordered, "credits": credits,
+    return {"title": title, "groups": ordered, "credits": credits, "links": area_links(soup),
             "totalCredits": total.get("credits"), "totalEcts": total.get("ects")}
 
 
@@ -255,48 +287,57 @@ def digest(entry: dict) -> str:
     return hashlib.sha1(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:12]
 
 
-def fill_area_courses(session, term: str, program: str, groups: list[dict], delay: float) -> None:
-    """The degree-detail summary names each area's credit/ECTS floor but not its courses —
-    fetch that list from p_list_courses for core/area/free, and merge FENS+FASS+business for
-    a faculty-courses group. Only fills groups that came back empty from the summary page."""
+def fetch_area(session, term: str, program: str, area: str, fac: str = "") -> list[str] | None:
+    """One p_list_courses call. None means the request failed (network, or a 5xx — which is
+    how BannerWeb answers an area code it doesn't know); [] means a real, empty list."""
+    url = AREA_URL.format(term=term, area=area, program=program) + (f"&P_FAC={fac}" if fac else "")
+    try:
+        res = session.get(url, timeout=45, headers={"Referer": URL.format(term=term, program=program)})
+        res.raise_for_status()
+    except Exception as exc:
+        reason = "server error" if "500" in str(exc) else str(exc)[:120]
+        print(f"    {area}{'/' + fac if fac else ''}: {reason}", file=sys.stderr)
+        return None
+    return parse_area_courses(res.text)
+
+
+def fill_area_courses(session, term: str, program: str, groups: list[dict], delay: float,
+                      links: list[dict] | None = None) -> None:
+    """Fill each empty core/area/free/faculty group from its p_list_courses page. The area codes
+    come from the links on the degree page itself when it has them (exact, per programme);
+    only when it doesn't are <PROGRAM>_CEL/_ARE/_FRE and FC_* guessed."""
+    links = links or []
     for group in groups:
-        if group.get("courses"):
+        if group.get("courses") or group["kind"] not in (*AREA_SUFFIX, "faculty"):
             continue
-        if group["kind"] in AREA_SUFFIX:
-            area = f"{program}_{AREA_SUFFIX[group['kind']]}"
-            url = AREA_URL.format(term=term, area=area, program=program)
-            referer = URL.format(term=term, program=program)   # this old-style page may check it
-            try:
-                res = session.get(url, timeout=45, headers={"Referer": referer})
-                res.raise_for_status()
-                group["courses"] = parse_area_courses(res.text)
-                note = f"{len(group['courses'])} courses" if group["courses"] \
-                    else f"0 courses in a {len(res.text)}-byte response"
-                print(f"    {group['kind']}: {note} ({area})")
-            except Exception as exc:
-                print(f"    {group['kind']} area failed: {exc}", file=sys.stderr)
+        found = [l for l in links if l["kind"] == group["kind"]
+                 and (not l["label"] or clean(l["label"]).lower().strip(" *:") == clean(group["name"]).lower()
+                      or kind_of(l["label"]) == group["kind"])]
+        guessed = not found
+        if guessed:
+            if group["kind"] == "faculty":
+                found = [{"area": a, "fac": f} for a, f in FACULTY_AREAS]
+            else:
+                found = [{"area": f"{program}_{AREA_SUFFIX[group['kind']]}", "fac": ""}]
+
+        codes: dict[str, None] = {}
+        worked = 0
+        faculties_done: set[str] = set()
+        for link in found:
+            if link["fac"] and link["fac"] in faculties_done:
+                continue          # FC_SOM already answered for P_FAC=M, skip the FC_SBS fallback
+            got = fetch_area(session, term, program, link["area"], link["fac"])
             time.sleep(delay)
-        elif group["kind"] == "faculty":
-            codes: dict[str, None] = {}
-            done: set[str] = set()
-            for area, fac in FACULTY_AREAS:
-                if fac in done:
-                    continue
-                url = f"{AREA_URL.format(term=term, area=area, program=program)}&P_FAC={fac}"
-                referer = URL.format(term=term, program=program)
-                try:
-                    res = session.get(url, timeout=45, headers={"Referer": referer})
-                    res.raise_for_status()
-                    found = parse_area_courses(res.text)
-                    if found:
-                        done.add(fac)
-                        for c in found:
-                            codes.setdefault(c, None)
-                except Exception as exc:
-                    print(f"    faculty area {area} failed: {exc}", file=sys.stderr)
-                time.sleep(delay)
-            group["courses"] = list(codes)
-            print(f"    faculty: {len(group['courses'])} courses across {len(done)}/3 schools")
+            if got is None:
+                continue
+            if got and link["fac"]:
+                faculties_done.add(link["fac"])
+            worked += 1
+            for c in got:
+                codes.setdefault(c, None)
+        group["courses"] = list(codes)
+        source = "guessed codes" if guessed else "codes from the degree page"
+        print(f"    {group['kind']}: {len(codes)} courses from {worked}/{len(found)} list(s), {source}")
 
 
 def main(argv=None) -> int:
@@ -373,7 +414,8 @@ def main(argv=None) -> int:
                 print("  no requirements on that page (programme not open to that entry term?)")
                 continue
             if not args.no_areas:
-                fill_area_courses(session, entry_term, program, parsed["groups"], args.delay)
+                fill_area_courses(session, entry_term, program, parsed["groups"], args.delay,
+                                  parsed.get("links"))
             entry = {"groups": parsed["groups"], "credits": parsed["credits"],
                      "totalCredits": parsed["totalCredits"], "totalEcts": parsed["totalEcts"], "source": url}
             h = digest({k: v for k, v in entry.items() if k != "source"})

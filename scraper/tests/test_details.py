@@ -115,6 +115,40 @@ def test_fill_area_courses():
     assert not any("BSEE_REQ" in c for c in calls)                   # confirms it really was skipped, not just coincidence
 
 
+def test_area_codes_come_from_the_degree_page():
+    """Programmes don't all name areas <PROGRAM>_ARE/_FRE — BSCS 500'd on those. The degree
+    page links each area's list itself, so those real codes must be used, never the guesses."""
+    import programs
+
+    parsed = programs.parse_page((HERE / "fixture_degree_links.html").read_text(encoding="utf-8"))
+    assert [l["area"] for l in parsed["links"]] == ["BSCS_CEL", "BSCS_AEL", "BSCS_FEL", "FC_FENS", "FC_FASS", "FC_SBS"]
+    calls = []
+
+    class R:
+        def __init__(self, text, code=200):
+            self.text, self.code = text, code
+
+        def raise_for_status(self):
+            if self.code >= 500:
+                raise Exception("500 Server Error")
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            area = url.split("P_AREA=")[1].split("&")[0]
+            calls.append(area)
+            lists = {"BSCS_CEL": "CS 301", "BSCS_AEL": "CS 412", "BSCS_FEL": "HUM 207",
+                     "FC_FENS": "MATH 306", "FC_FASS": "ECON 201", "FC_SBS": "MGMT 201"}
+            if area in lists:
+                return R(f"<table><tr><td>{lists[area]}</td></tr></table>")
+            return R("", 500)
+
+    programs.fill_area_courses(S(), "202401", "BSCS", parsed["groups"], 0, parsed["links"])
+    by = {g["kind"]: g["courses"] for g in parsed["groups"]}
+    assert by["area"] == ["CS 412"] and by["free"] == ["HUM 207"]
+    assert set(by["faculty"]) == {"MATH 306", "ECON 201", "MGMT 201"}
+    assert "BSCS_ARE" not in calls and "BSCS_FRE" not in calls
+
+
 def test_kind_of_basic_science_engineering():
     import programs
     assert programs.kind_of("Basic Science Courses") == "basicscience"
