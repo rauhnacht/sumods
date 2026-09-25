@@ -12,6 +12,12 @@ on:
         description: "Re-fetch courses already stored"
         type: boolean
         default: false
+      programs:
+        description: "Degree requirements: programme codes to test, space-separated (blank = all 12)"
+        required: false
+      entries:
+        description: "Degree requirements: entry terms to test, space-separated (blank = every year since 2019)"
+        required: false
 
 permissions:
   contents: write
@@ -35,9 +41,12 @@ jobs:
           python -u scraper/details.py --delay 1.0 \
             ${{ inputs.term && format('--term {0}', inputs.term) || '' }} \
             ${{ inputs.refresh && '--refresh' || '' }}
-      - name: Degree requirements (every programme, entry terms since 2019)
+      - name: Degree requirements (all programmes/entries unless scoped above)
         continue-on-error: true
-        run: python -u scraper/programs.py
+        run: |
+          python -u scraper/programs.py \
+            ${{ inputs.programs && format('--programs {0}', inputs.programs) || '' }} \
+            ${{ inputs.entries && format('--entries {0}', inputs.entries) || '' }}
 
       - name: Commit
         run: |
