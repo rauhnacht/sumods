@@ -88,7 +88,7 @@ scraper/seats.py     seat availability per CRN
   description, ECTS, prerequisites, every section with its room and instructor, a link to
   each section's **syllabus**, the course catalog page, and the BannerWeb page where seat
   counts live.
-- **Rooms** — which rooms have no class at a given hour, and any room's week.
+- **Rooms** — every room, filterable by name; pick one to see its full weekly schedule.
 
 Timetables are stored in the browser (localStorage), one per term. Nothing leaves the device.
 

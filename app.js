@@ -2368,23 +2368,14 @@ function buildingOf(place) {
 
 function renderRooms() {
   const filter = fold($('#room-search').value.trim());
-  const day = Number($('#room-day').value);
-  const time = Number($('#room-time').value);
-  const rooms = roomList();
-  const busy = new Set();
-  rooms.forEach((r) => {
-    for (const { m } of App.idx.rooms.get(r)) {
-      if (m.day === day && m.start < time + 50 && time < m.end) { busy.add(r); break; }
-    }
-  });
-  const free = rooms.filter((r) => !busy.has(r) && (!filter || fold(r).includes(filter)));
+  const rooms = roomList().filter((r) => !filter || fold(r).includes(filter));
   const byBuilding = new Map();
-  free.forEach((r) => {
+  rooms.forEach((r) => {
     const b = buildingOf(r);
     if (!byBuilding.has(b)) byBuilding.set(b, []);
     byBuilding.get(b).push(r);
   });
-  $('#room-free').innerHTML = `<p class="cat-sub">${free.length} room${free.length === 1 ? '' : 's'} with no scheduled class on ${DAYS_FULL[day]} at ${hhmm(time)}.</p>`
+  $('#room-free').innerHTML = `<p class="cat-sub">${rooms.length} room${rooms.length === 1 ? '' : 's'}. Pick one to see its full week.</p>`
     + [...byBuilding.entries()].map(([b, rs]) => `<div class="building">${esc(b)}</div><div class="room-list">${
       rs.map((r) => `<button class="room-btn" type="button" data-room="${esc(r)}" aria-pressed="${App.room === r}">${esc(r.replace(b, '').trim() || r)}</button>`).join('')
     }</div>`).join('');
@@ -3566,8 +3557,7 @@ function bindEvents() {
   });
 
   // rooms
-  ['#room-search', '#room-day', '#room-time'].forEach((sel) =>
-    $(sel).addEventListener('input', () => renderRooms()));
+  $('#room-search').addEventListener('input', () => renderRooms());
   $('#room-free').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-room]');
     if (!btn) return;
@@ -3581,16 +3571,6 @@ function bindEvents() {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => { if (store.prefs.orientation === 'auto') render(); }, 180);
   });
-}
-
-function fillRoomControls() {
-  const now = istanbulNow();
-  $('#room-day').innerHTML = DAYS.slice(0, 6).map((d, i) =>
-    `<option value="${i}"${i === Math.min(now.day, 5) ? ' selected' : ''}>${d}</option>`).join('');
-  const slots = [];
-  for (let t = DAY_START; t <= 21 * 60 + 40; t += 60) slots.push(t);
-  const nearest = slots.reduce((a, b) => (Math.abs(b - now.min) < Math.abs(a - now.min) ? b : a), slots[0]);
-  $('#room-time').innerHTML = slots.map((t) => `<option value="${t}"${t === nearest ? ' selected' : ''}>${hhmm(t)}</option>`).join('');
 }
 
 /* -------------------------------------------------------------------- boot */
@@ -3619,8 +3599,6 @@ async function boot() {
   });
   $('#term-select').innerHTML = [...years.entries()].map(([year, list]) =>
     `<optgroup label="${esc(year)}">${list.map((t) => `<option value="${esc(t.code)}">${esc(t.name)}</option>`).join('')}</optgroup>`).join('');
-  fillRoomControls();
-
   const hash = parseHash();
   let term = hash?.term || store.term;
   if (!terms.some((t) => t.code === term)) term = defaultTermCode(terms);
