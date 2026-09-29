@@ -176,7 +176,11 @@ def test_details_covers_next_term_and_merges(tmp_path=None):
     details.default_term = lambda index, data_dir: "202601"
     details.make_session = lambda: None
     details.time.sleep = lambda s: None
-    details.main(["--data", str(data)])
+    try:
+        details.main(["--data", str(data)])
+    finally:
+        import importlib
+        importlib.reload(details)        # undo the stubs so later tests see the real module
     assert ("202602", "EE 412") in fetched, fetched                 # the next term is covered now
     assert ("202602", "EE 202") not in fetched                      # shared course reused, not re-fetched
     assert not any(t == "202503" for t, _ in fetched)                # finished terms are left alone
@@ -190,10 +194,36 @@ def test_banner_catalog_engineering_basic_science():
     import details
     number_first = ("<td>Diodes.<br>3.000 Credit hours<br>6.000 ECTS<br>6.000 Engineering ECTS<br>"
                     "0.000 Basic Science ECTS<br>Faculty of Engineering and Natural Sciences 2019</td>")
-    assert details.parse_banner_catalog(number_first) == {"ects": 6, "engineering": 6, "basicscience": 0}
+    got = details.parse_banner_catalog(number_first)
+    assert {k: got.get(k) for k in ("ects", "engineering", "basicscience")} == {"ects": 6, "engineering": 6, "basicscience": 0}
     label_first = "<p>ECTS Credits: 7</p><p>Engineering Credits (ECTS): 6</p><p>Basic Science Credits (ECTS): 1</p>"
-    assert details.parse_banner_catalog(label_first) == {"ects": 7, "engineering": 6, "basicscience": 1}
+    got = details.parse_banner_catalog(label_first)
+    assert {k: got.get(k) for k in ("ects", "engineering", "basicscience")} == {"ects": 7, "engineering": 6, "basicscience": 1}
     assert details.parse_banner_catalog("<title>Sign in to your account</title>") == {}
+
+
+def test_real_banner_catalog_page():
+    """A real bwckctlg page (EE 303, Fall 2026-2027): ECTS with its ENGINEERING:x / BASIC:y split in
+    Course Attributes, plus description, credits and pre/corequisites."""
+    import details
+    got = details.parse_banner_catalog((HERE / "fixture_banner_catalog.html").read_text(encoding="utf-8"))
+    assert (got["credits"], got["ects"], got["engineering"], got["basicscience"]) == (3, 6, 6, 0), got
+    assert got["desc"].startswith("DC, Small-signal") and "Fark-Yükselteci" not in got["desc"]
+    assert details.parse_requirements(got["prereq"]) == [["EL 202", "EE 202"]]
+    assert details.parse_requirements(got["coreq"]) == [["EE 303R"]]
+    assert "Return to Previous" not in got["prereq"]
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            class R:
+                status_code = 200
+                text = (HERE / "fixture_banner_catalog.html").read_text(encoding="utf-8")
+            assert "bwckctlg" in url, "the Banner catalog should answer before any other source"
+            return R()
+    course = {"code": "EE 303", "components": [{"type": "", "sections": [{"crn": "1", "group": "0", "meetings": []}]}]}
+    info = details.course_details(S(), "202601", course)
+    assert (info["eng"], info["bs"], info["ects"], info["credits"]) == (6, 0, 6, 3), info
+    assert info["prereqCodes"] == [["EL 202", "EE 202"]] and info["source"] == "bannerweb"
 
 
 def test_kind_of_basic_science_engineering():

@@ -101,7 +101,7 @@ def norm_label(text: str):
 
 
 def number_or_none(text):
-    m = re.search(r"(\d+(?:[.,]\d+)?)", str(text or ""))
+    m = re.search(r"(\d+(?:[.,]\d+)?)", "" if text is None else str(text))   # 0 is a real value
     if not m:
         return None
     value = float(m.group(1).replace(",", "."))
@@ -230,21 +230,28 @@ BANNER_CATALOG = ("https://suis.sabanciuniv.edu/prod/bwckctlg.p_disp_course_deta
                   "?cat_term_in={term}&subj_code_in={subj}&crse_numb_in={num}")
 NUM = r"(\d+(?:[.,]\d+)?)"
 SPLIT_PATTERNS = {
-    # "6.000 Engineering ECTS" (Banner prints hours number-first) or "Engineering (ECTS): 6"
-    "engineering": [re.compile(NUM + r"\s+(?:ECTS\s+)?Engineering\b", re.I),
+    # the real page: "Lang. of Instruction: English, 6 ECTS (ENGINEERING:6 / BASIC:0)"
+    "engineering": [re.compile(r"\bENGINEERING\s*:\s*" + NUM, re.I),
+                    re.compile(NUM + r"\s+(?:ECTS\s+)?Engineering\b", re.I),
                     re.compile(r"^\s*Engineering(?:\s+(?:Credits?|ECTS))*\s*(?:\(ECTS\))?\s*[:\-]?\s*" + NUM, re.I)],
-    "basicscience": [re.compile(NUM + r"\s+(?:ECTS\s+)?Basic\s+Sciences?\b", re.I),
+    "basicscience": [re.compile(r"\bBASIC(?:\s+SCIENCES?)?\s*:\s*" + NUM, re.I),
+                     re.compile(NUM + r"\s+(?:ECTS\s+)?Basic\s+Sciences?\b", re.I),
                      re.compile(r"^\s*Basic\s+Sciences?(?:\s+(?:Credits?|ECTS))*\s*(?:\(ECTS\))?\s*[:\-]?\s*" + NUM, re.I)],
     "ects": [re.compile(NUM + r"\s+ECTS\b(?!\s+(?:Engineering|Basic))", re.I),
              re.compile(r"^\s*ECTS(?:\s+Credits?)?\s*[:\-]?\s*" + NUM, re.I)],
+    "credits": [re.compile(NUM + r"\s+Credit hours\b", re.I)],
 }
 
 
 def parse_banner_catalog(html: str) -> dict:
-    """Engineering / Basic Science / ECTS lines from a bwckctlg course detail page, read line by
-    line so "Faculty of Engineering and Natural Sciences" and the like can't be mistaken for one."""
-    out: dict[str, float] = {}
-    for line in text_lines(soup_of(html)):
+    """A bwckctlg course detail page: English description, SU credits, ECTS with its
+    Engineering / Basic Science split, prerequisites and corequisites — all from the registration
+    system itself. Lines are read one at a time so a phrase like "Faculty of Engineering and
+    Natural Sciences" can't pass for a credit value."""
+    soup = soup_of(html)
+    cell = soup.find("td", class_="ntdefault")
+    out: dict = {}
+    for line in text_lines(cell if cell is not None else soup):
         for key, patterns in SPLIT_PATTERNS.items():
             if key in out:
                 continue
@@ -253,10 +260,40 @@ def parse_banner_catalog(html: str) -> dict:
                 if m:
                     out[key] = number_or_none(m.group(1))
                     break
-    # also accept the column-table layout the other SU pages use
-    for key, value in parse_labelled(html).items():
-        if key in ("engineering", "basicscience", "ects") and key not in out and number_or_none(value) is not None:
-            out[key] = number_or_none(value)
+    if cell is None:
+        return out
+
+    # description: the text after the italic English title, up to the bold Turkish title or the credits
+    parts = []
+    for node in cell.children:
+        name = getattr(node, "name", None)
+        if name == "i":
+            continue
+        if name == "b" or (name is None and "Credit hours" in str(node)):
+            break
+        text = node.get_text(" ") if name else str(node)
+        if name == "br" and parts and parts[-1] != "\n":
+            parts.append("\n")
+        elif text.strip():
+            parts.append(text)
+    desc = clean(" ".join(p for p in parts if p != "\n"))
+    if len(desc) > 20:
+        out["desc"] = desc[:MAX_TEXT]
+
+    # prerequisites / corequisites: the text under each label, up to the next label
+    labels = cell.find_all("span", class_="fieldlabeltext")
+    for label in labels:
+        key = norm_label(label.get_text(" "))
+        if key not in ("prereq", "coreq"):
+            continue
+        chunk = []
+        for node in label.next_siblings:
+            if getattr(node, "name", None) == "span" and "fieldlabeltext" in (node.get("class") or []):
+                break
+            chunk.append(node.get_text(" ") if getattr(node, "name", None) else str(node))
+        text = clean(" ".join(chunk))
+        if text:
+            out[key] = text[:MAX_TEXT]
     return out
 
 
@@ -285,11 +322,10 @@ def course_details(session, term: str, course: dict, dump: Path | None = None, s
     html = fetch(session, BANNER_CATALOG.format(term=term, subj=subj, num=num), dump)
     if html:
         for key, value in parse_banner_catalog(html).items():
-            if value is not None:
+            if value is not None and value != "":
                 fields[key] = value
-        prereq = parse_labelled(html).get("prereq")
-        if prereq:
-            fields.setdefault("prereq", prereq)
+        if fields.get("desc"):
+            info["source"] = "bannerweb"
     if dump:
         return info
 
