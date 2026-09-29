@@ -69,6 +69,10 @@ FIELDS = {
     "coreq": ["corequisite", "corequisites", "yan koşul"],
     "language": ["language of instruction", "language", "dil"],
     "ects": ["ects credit", "ects credits", "ects", "akts"],
+    "engineering": ["engineering", "engineering credit", "engineering credits", "engineering ects",
+                    "mühendislik", "mühendislik kredisi"],
+    "basicscience": ["basic science", "basic sciences", "basic science credit", "basic science credits",
+                     "basic science ects", "temel bilim", "temel bilimler"],
     "credits": ["su credits", "su credit", "credits", "kredi"],
 }
 LABEL_LOOKUP = {label: key for key, labels in FIELDS.items() for label in labels}
@@ -114,9 +118,18 @@ def parse_labelled(html: str) -> dict:
         if key and value and value not in {"-", "--", ":"} and key not in out:
             out[key] = value[:MAX_TEXT]
 
+    for table in soup.find_all("table"):
+        rows = [[clean(c.get_text(" ")) for c in r.find_all(["th", "td"])] for r in table.find_all("tr")]
+        for head, values in zip(rows, rows[1:]):
+            keys = [norm_label(h) for h in head]
+            if sum(1 for k in keys if k) >= 2 and len(values) == len(head):
+                for key, value in zip(keys, values):
+                    if key in ("ects", "credits", "engineering", "basicscience") and number_or_none(value) is not None:
+                        put(key, value)
     for row in soup.find_all("tr"):
         cells = row.find_all(["th", "td"])
-        if len(cells) >= 2:
+        # a row whose second cell is itself a label is a column header, not "label | value"
+        if len(cells) >= 2 and not norm_label(cells[1].get_text(" ")):
             put(norm_label(cells[0].get_text(" ")), cells[1].get_text(" "))
     for tag in soup.find_all("dt"):
         value = tag.find_next_sibling("dd")
@@ -202,7 +215,63 @@ def fetch(session, url: str, dump: Path | None = None):
     if dump:
         dump.write_text(res.text, encoding="utf-8")
         print(f"    saved {dump}")
+    if "Sign in to your account" in res.text[:5000] or "login.microsoftonline" in res.text[:5000]:
+        print(f"    login page instead of content (needs a university account): {url}", file=sys.stderr)
+        return None
     return res.text
+
+
+INFO_VERSION = 3          # 3 = Engineering / Basic Science ECTS from BannerWeb's course catalog
+
+# BannerWeb's own course catalog: public (same /prod/ system as the schedule) and, per the EE
+# department's own pages, where each course's Engineering and Basic Science ECTS are listed.
+# The syllabus pages at apps.sabanciuniv.edu need a university login, so they're linked, not read.
+BANNER_CATALOG = ("https://suis.sabanciuniv.edu/prod/bwckctlg.p_disp_course_detail"
+                  "?cat_term_in={term}&subj_code_in={subj}&crse_numb_in={num}")
+NUM = r"(\d+(?:[.,]\d+)?)"
+SPLIT_PATTERNS = {
+    # "6.000 Engineering ECTS" (Banner prints hours number-first) or "Engineering (ECTS): 6"
+    "engineering": [re.compile(NUM + r"\s+(?:ECTS\s+)?Engineering\b", re.I),
+                    re.compile(r"^\s*Engineering(?:\s+(?:Credits?|ECTS))*\s*(?:\(ECTS\))?\s*[:\-]?\s*" + NUM, re.I)],
+    "basicscience": [re.compile(NUM + r"\s+(?:ECTS\s+)?Basic\s+Sciences?\b", re.I),
+                     re.compile(r"^\s*Basic\s+Sciences?(?:\s+(?:Credits?|ECTS))*\s*(?:\(ECTS\))?\s*[:\-]?\s*" + NUM, re.I)],
+    "ects": [re.compile(NUM + r"\s+ECTS\b(?!\s+(?:Engineering|Basic))", re.I),
+             re.compile(r"^\s*ECTS(?:\s+Credits?)?\s*[:\-]?\s*" + NUM, re.I)],
+}
+
+
+def parse_banner_catalog(html: str) -> dict:
+    """Engineering / Basic Science / ECTS lines from a bwckctlg course detail page, read line by
+    line so "Faculty of Engineering and Natural Sciences" and the like can't be mistaken for one."""
+    out: dict[str, float] = {}
+    for line in text_lines(soup_of(html)):
+        for key, patterns in SPLIT_PATTERNS.items():
+            if key in out:
+                continue
+            for pattern in patterns:
+                m = pattern.search(line)
+                if m:
+                    out[key] = number_or_none(m.group(1))
+                    break
+    # also accept the column-table layout the other SU pages use
+    for key, value in parse_labelled(html).items():
+        if key in ("engineering", "basicscience", "ects") and key not in out and number_or_none(value) is not None:
+            out[key] = number_or_none(value)
+    return out
+
+
+def merge_all_info(data_dir: Path) -> Path:
+    """data/info-all.json: every course's details from every term's info file, newest term
+    winning. Prerequisites and ECTS barely change between terms, so a course looked up in a
+    term that was never scraped (or one where it isn't offered) still gets its details."""
+    merged: dict[str, dict] = {}
+    for path in sorted(data_dir.glob("[0-9][0-9][0-9][0-9][0-9][0-9]-info.json")):
+        term = path.name[:6]
+        for code, info in json.loads(path.read_text(encoding="utf-8")).get("courses", {}).items():
+            merged[code] = {**merged.get(code, {}), **{k: v for k, v in info.items() if k != "syllabus"}, "term": term}
+    out = data_dir / "info-all.json"
+    out.write_text(json.dumps({"schema": 1, "courses": merged}, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    return out
 
 
 def course_details(session, term: str, course: dict, dump: Path | None = None, source: str = "both") -> dict:
@@ -213,13 +282,28 @@ def course_details(session, term: str, course: dict, dump: Path | None = None, s
     info: dict = {"syllabus": {s["group"]: syllabus_url(term, subj, num, s["group"]) for s in sections}}
     fields: dict = {}
 
-    if source in ("both", "syllabus") and sections:
+    html = fetch(session, BANNER_CATALOG.format(term=term, subj=subj, num=num), dump)
+    if html:
+        for key, value in parse_banner_catalog(html).items():
+            if value is not None:
+                fields[key] = value
+        prereq = parse_labelled(html).get("prereq")
+        if prereq:
+            fields.setdefault("prereq", prereq)
+    if dump:
+        return info
+
+    if source == "syllabus" and sections:          # only on request: these pages need a login
         html = fetch(session, syllabus_url(term, subj, num, sections[0]["group"]), dump)
         if html:
             found = parse_labelled(html)
             if found.get("desc"):
                 fields.update(found)
                 info["source"] = "syllabus"
+            else:
+                for key in ("ects", "credits", "engineering", "basicscience"):
+                    if found.get(key):
+                        fields[key] = found[key]
 
     if source in ("both", "catalog") and (not fields.get("desc") or not fields.get("ects")):
         for graduate in (is_graduate(base), not is_graduate(base)):
@@ -237,10 +321,11 @@ def course_details(session, term: str, course: dict, dump: Path | None = None, s
         value = fields.get(key)
         if value and value.strip(" -."):
             info[key] = value
-    for key in ("ects", "credits"):
+    for key, out_key in (("ects", "ects"), ("credits", "credits"), ("engineering", "eng"), ("basicscience", "bs")):
         value = number_or_none(fields.get(key))
         if value is not None:
-            info[key] = value
+            info[out_key] = value
+    info["v"] = INFO_VERSION
     for key, out_key in (("prereq", "prereqCodes"), ("coreq", "coreqCodes")):
         groups = parse_requirements(info.get(key, ""))
         if groups:
@@ -261,50 +346,84 @@ def main(argv=None) -> int:
     ap.add_argument("--dump", help="save the first page fetched to this file and stop")
     ap.add_argument("--html", help="parse a saved page and print what the parsers find")
     args = ap.parse_args(argv)
+    if args.dump:
+        args.refresh = True          # a dump is a look at the live page, even for a stored course
 
     if args.html:
         html = Path(args.html).read_text(encoding="utf-8", errors="replace")
+        print(json.dumps({"banner_catalog": parse_banner_catalog(html)}, ensure_ascii=False))
         print(json.dumps({"labelled": parse_labelled(html), "catalog": parse_catalog(html)},
                          ensure_ascii=False, indent=2)[:4000])
         return 0
 
     data_dir = Path(args.data)
     index = json.loads((data_dir / "terms.json").read_text(encoding="utf-8"))
-    term = args.term or default_term(index, data_dir)
-    schedule = json.loads((data_dir / f"{term}.json").read_text(encoding="utf-8"))
-
-    out_path = data_dir / f"{term}-info.json"
-    store = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() \
-        else {"schema": 1, "term": term, "courses": {}}
-    store.setdefault("courses", {})
-
-    courses = schedule["courses"]
-    if args.only:
-        wanted = {c.upper() for c in args.only}
-        courses = [c for c in courses if c["code"].upper() in wanted]
-    todo = [c for c in courses if args.refresh or c["code"] not in store["courses"]]
-    if args.limit:
-        todo = todo[: args.limit]
-    print(f"{term}: {len(todo)} course(s) to fetch, {len(store['courses'])} already stored")
-
-    def flush():
-        store["updated"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        out_path.write_text(json.dumps(store, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-
+    if args.term:
+        terms = [args.term]
+    else:
+        # the term in session plus any newer one already listed (next term's registration
+        # opens while this one runs, and planning needs its prerequisites too)
+        active = default_term(index, data_dir)
+        terms = sorted({t["code"] for t in index["terms"] if t["code"] >= active
+                        and (data_dir / f'{t["code"]}.json').exists()} | {active})
+    known = json.loads((data_dir / "info-all.json").read_text(encoding="utf-8")).get("courses", {}) \
+        if (data_dir / "info-all.json").exists() else {}
     session = make_session()
-    for i, course in enumerate(todo, 1):
-        print(f"  [{i}/{len(todo)}] {course['code']}")
-        info = course_details(session, term, course, Path(args.dump) if args.dump else None, args.source)
-        if args.dump:
-            return 0
-        store["courses"][course["code"]] = info
-        if i % 25 == 0:
-            flush()
-        time.sleep(args.delay)
 
-    flush()
-    described = sum(1 for v in store["courses"].values() if v.get("desc"))
-    print(f"{out_path}: {len(store['courses'])} courses, {described} with a description")
+    for term in terms:
+        schedule = json.loads((data_dir / f"{term}.json").read_text(encoding="utf-8"))
+        out_path = data_dir / f"{term}-info.json"
+        store = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() \
+            else {"schema": 1, "term": term, "courses": {}}
+        store.setdefault("courses", {})
+
+        courses = schedule["courses"]
+        if args.only:
+            wanted = {c.upper() for c in args.only}
+            courses = [c for c in courses if c["code"].upper() in wanted]
+        todo, reused = [], 0
+        for c in courses:
+            have = store["courses"].get(c["code"])
+            if not args.refresh and have and have.get("v", 1) >= INFO_VERSION:
+                continue
+            other = known.get(c["code"])
+            if not args.refresh and other and other.get("v", 1) >= INFO_VERSION and other.get("term") != term:
+                # already read this term or another — reuse it, only the syllabus links are per-term
+                subj, base = c["code"].split(" ")
+                lecture = next((x for x in c["components"] if x["type"] == ""), c["components"][0])
+                store["courses"][c["code"]] = {
+                    **{k: v for k, v in other.items() if k != "term"},
+                    "syllabus": {sec["group"]: syllabus_url(term, subj, base + (lecture["type"] or ""), sec["group"])
+                                 for sec in lecture["sections"]},
+                }
+                reused += 1
+                continue
+            todo.append(c)
+        if args.limit:
+            todo = todo[: args.limit]
+        print(f"{term}: {len(todo)} to fetch, {reused} reused from another term, {len(store['courses'])} stored")
+
+        def flush():
+            store["updated"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            out_path.write_text(json.dumps(store, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+        for i, course in enumerate(todo, 1):
+            print(f"  [{i}/{len(todo)}] {course['code']}")
+            info = course_details(session, term, course, Path(args.dump) if args.dump else None, args.source)
+            if args.dump:
+                return 0
+            store["courses"][course["code"]] = info
+            known[course["code"]] = {**info, "term": term}
+            if i % 25 == 0:
+                flush()
+            time.sleep(args.delay)
+        flush()
+        described = sum(1 for v in store["courses"].values() if v.get("desc"))
+        tagged = sum(1 for v in store["courses"].values() if v.get("eng") or v.get("bs"))
+        print(f"{out_path}: {len(store['courses'])} courses, {described} described, "
+              f"{tagged} with Engineering/Basic Science credits")
+
+    print(merge_all_info(data_dir))
     return 0
 
 

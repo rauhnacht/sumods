@@ -57,6 +57,10 @@ scraper/seats.py     seat availability per CRN
   timetable says which day of registration each course opens for you, with its CRNs, plus the
   critical (`*`) and class-restriction (`!`) marks from the published list. The CRN window
   groups the codes by day so you can work through registration in order.
+- **Course finder** — from the Timetable, lists every course that still fits around what you
+  have: as your sections are, or after moving some of them (it names the moves). Filter by
+  subject, level, seats left, and by which of your programme's requirements a course counts
+  toward; Add applies any moves in one step, with Undo.
 - **Seats** — capacity and remaining seats per section in the course panel, the section
   pickers, the CRN list and the registration table; a full section you picked gets a warning,
   and the auto-picker and optimiser steer around full sections. With the optional live
@@ -320,6 +324,11 @@ SU_DEGREE.p_list_courses?P_TERM=<entry>&P_AREA=<PROGRAM>_CEL&P_PROGRAM=<PROGRAM>
 `--no-areas` skips these extra fetches (faster, for a quick structural check); `--area-html`
 parses a saved area page standalone; `--dump-area core|area|free|faculty` (with `--programs`/
 `--entries` set) fetches just one area and saves or prints it.
+
+Engineering and Basic Science ECTS per course come from BannerWeb's public course catalog
+(`bwckctlg.p_disp_course_detail`), which the EE department itself points to for these numbers.
+The syllabus pages (apps.sabanciuniv.edu) need a university login, so SUMods links to them but
+never reads them; `details.py` flags a login page instead of mistaking it for content.
 
 Basic Science and Engineering appear on the summary as their own ECTS floors, not areas with a
 course list — which courses count toward them isn't on this page; the university notes it's a

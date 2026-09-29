@@ -149,6 +149,53 @@ def test_area_codes_come_from_the_degree_page():
     assert "BSCS_ARE" not in calls and "BSCS_FRE" not in calls
 
 
+def test_syllabus_engineering_basic_science():
+    import details
+    column = """<table><tr><th>SU Credit</th><th>ECTS Credit</th><th>Basic Science</th><th>Engineering</th></tr>
+      <tr><td>4</td><td>7</td><td>1</td><td>6</td></tr></table>"""
+    got = details.parse_labelled(column)
+    assert [details.number_or_none(got.get(k)) for k in ("credits", "ects", "basicscience", "engineering")] == [4, 7, 1, 6]
+    labelled = "<p>ECTS: 6</p><p>Engineering: 4</p><p>Basic Science: 2</p>"
+    got = details.parse_labelled(labelled)
+    assert details.number_or_none(got.get("engineering")) == 4 and details.number_or_none(got.get("basicscience")) == 2
+
+
+def test_details_covers_next_term_and_merges(tmp_path=None):
+    import json, tempfile
+    import details
+    data = Path(tempfile.mkdtemp())
+    course = lambda code: {"code": code, "components": [{"type": "", "sections": [{"crn": "1", "group": "A", "meetings": []}]}]}
+    (data / "terms.json").write_text(json.dumps({"terms": [{"code": "202602"}, {"code": "202601"}, {"code": "202503"}]}))
+    (data / "202601.json").write_text(json.dumps({"courses": [course("EE 202"), course("EE 311")]}))
+    (data / "202602.json").write_text(json.dumps({"courses": [course("EE 202"), course("EE 412")]}))
+    (data / "202503.json").write_text(json.dumps({"courses": [course("OLD 101")]}))
+    fetched = []
+    details.course_details = lambda session, term, c, dump=None, source="both": (
+        fetched.append((term, c["code"])) or {"desc": "d", "ects": 6, "eng": 4, "bs": 2, "v": details.INFO_VERSION,
+                                               "prereqCodes": [["EE 201"]] if c["code"] == "EE 412" else []})
+    details.default_term = lambda index, data_dir: "202601"
+    details.make_session = lambda: None
+    details.time.sleep = lambda s: None
+    details.main(["--data", str(data)])
+    assert ("202602", "EE 412") in fetched, fetched                 # the next term is covered now
+    assert ("202602", "EE 202") not in fetched                      # shared course reused, not re-fetched
+    assert not any(t == "202503" for t, _ in fetched)                # finished terms are left alone
+    merged = json.loads((data / "info-all.json").read_text())["courses"]
+    assert set(merged) == {"EE 202", "EE 311", "EE 412"} and merged["EE 412"]["eng"] == 4
+    spring = json.loads((data / "202602-info.json").read_text())["courses"]
+    assert "202602" in spring["EE 202"]["syllabus"]["A"]            # reused entry gets this term's syllabus link
+
+
+def test_banner_catalog_engineering_basic_science():
+    import details
+    number_first = ("<td>Diodes.<br>3.000 Credit hours<br>6.000 ECTS<br>6.000 Engineering ECTS<br>"
+                    "0.000 Basic Science ECTS<br>Faculty of Engineering and Natural Sciences 2019</td>")
+    assert details.parse_banner_catalog(number_first) == {"ects": 6, "engineering": 6, "basicscience": 0}
+    label_first = "<p>ECTS Credits: 7</p><p>Engineering Credits (ECTS): 6</p><p>Basic Science Credits (ECTS): 1</p>"
+    assert details.parse_banner_catalog(label_first) == {"ects": 7, "engineering": 6, "basicscience": 1}
+    assert details.parse_banner_catalog("<title>Sign in to your account</title>") == {}
+
+
 def test_kind_of_basic_science_engineering():
     import programs
     assert programs.kind_of("Basic Science Courses") == "basicscience"
