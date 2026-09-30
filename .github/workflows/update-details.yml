@@ -6,17 +6,17 @@ on:
   workflow_dispatch:
     inputs:
       term:
-        description: "Term code (blank = newest in data/terms.json)"
+        description: "Term code (blank = the term in session and the next one)"
         required: false
       refresh:
-        description: "Re-fetch courses already stored"
+        description: "Re-fetch everything already stored"
         type: boolean
         default: false
       programs:
-        description: "Degree requirements: programme codes to test, space-separated (blank = all 12)"
+        description: "Degree requirements: programme codes, space-separated (blank = all 12)"
         required: false
       entries:
-        description: "Degree requirements: entry terms to test, space-separated (blank = every year since 2019)"
+        description: "Degree requirements: entry terms, space-separated (blank = every year since 2019)"
         required: false
 
 permissions:
@@ -26,37 +26,39 @@ concurrency:
   group: sumods-data-write
   cancel-in-progress: false
 
+# Each script stops itself inside its budget and saves what it has, and each result is committed
+# as soon as it exists (even if a later step fails), so a slow BannerWeb day costs time, never work.
+# Anything unfinished is picked up by the next run.
 jobs:
   details:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r scraper/requirements.txt
-      - name: Fetch syllabus and catalog details
-        run: |
-          python -u scraper/details.py --delay 1.0 \
-            ${{ inputs.term && format('--term {0}', inputs.term) || '' }} \
-            ${{ inputs.refresh && '--refresh' || '' }}
-      - name: Degree requirements (all programmes/entries unless scoped above)
+
+      - name: Course details (BannerWeb catalog)
         continue-on-error: true
         run: |
-          python -u scraper/programs.py \
-            ${{ inputs.programs && format('--programs {0}', inputs.programs) || '' }} \
-            ${{ inputs.entries && format('--entries {0}', inputs.entries) || '' }}
+          python -u scraper/details.py --budget 35 --delay 0.3 \
+            ${{ inputs.term && format('--term {0}', inputs.term) || '' }} \
+            ${{ inputs.refresh && '--refresh' || '' }}
 
-      - name: Commit
+      - name: Commit course details
+        if: always()
+        run: bash .github/commit-data.sh "data: course details $(date -u +%Y-%m-%d)"
+
+      - name: Degree requirements
+        continue-on-error: true
         run: |
-          if [ -n "$(git status --porcelain data)" ]; then
-            git config user.name "sumods-bot"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add data
-            git commit -m "data: course details $(date -u +%Y-%m-%d)"
-            git pull --rebase
-            git push
-          else
-            echo "No changes."
-          fi
+          python -u scraper/programs.py --budget 30 \
+            ${{ inputs.programs && format('--programs {0}', inputs.programs) || '' }} \
+            ${{ inputs.entries && format('--entries {0}', inputs.entries) || '' }} \
+            ${{ inputs.refresh && '--refresh' || '' }}
+
+      - name: Commit degree requirements
+        if: always()
+        run: bash .github/commit-data.sh "data: degree requirements $(date -u +%Y-%m-%d)"

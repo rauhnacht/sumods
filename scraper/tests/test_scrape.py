@@ -46,7 +46,10 @@ def test_finalize_groups_components():
     assert cs["components"][1]["label"] == "Recitation"
 
     ee = by["EE 311"]
-    assert ee["level"] == "UG+GR"
+    assert ee["level"] == "UG"          # listed for every level in Banner, but numbered as undergraduate
+    from scrape import level_code
+    everyone = {"Doctorate, Undergraduate, Masters"}
+    assert [level_code(everyone, n) for n in ("001", "101", "48011", "501", "790")] == ["PREP", "UG", "UG", "GR", "GR"]
     # Monday meets in two rooms at the same time -> merged into one meeting
     mon = [m for m in ee["components"][0]["sections"][0]["meetings"] if m[0] == 0]
     assert len(mon) == 1 and data["places"][mon[0][3]] == "FENS L030 / FENS L055"

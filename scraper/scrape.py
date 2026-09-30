@@ -231,19 +231,15 @@ class Indexer:
 
 
 def level_code(levels: set[str], num: str) -> str | None:
-    tags = set()
-    for lv in levels:
-        for part in lv.split(","):
-            p = part.strip().lower()
-            if not p:
-                continue
-            if p.startswith("under"):
-                tags.add("UG")
-            elif p.startswith(("grad", "master", "doct", "phd")):
-                tags.add("GR")
-    if tags:
-        return "+".join(sorted(tags, key=lambda t: t != "UG"))
-    return None
+    """By course number, not Banner's level list (which names every level — Doctorate, Masters,
+    Undergraduate… — even for plain undergraduate courses): 0xx preparatory/language courses,
+    1xx–4xx and 48xxx undergraduate, 5xx and up graduate."""
+    digit = (num or "").lstrip()[:1]
+    if not digit.isdigit():
+        return None
+    if digit == "0":
+        return "PREP"
+    return "UG" if digit in "1234" else "GR"
 
 
 def finalize_term(term: str, name: str, raw: list[dict], updated: str | None = None,

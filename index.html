@@ -109,6 +109,7 @@
         <button type="button" data-level="all" aria-pressed="true">All</button>
         <button type="button" data-level="ug" aria-pressed="false">Undergrad</button>
         <button type="button" data-level="gr" aria-pressed="false">Graduate</button>
+        <button type="button" data-level="prep" aria-pressed="false">Prep</button>
       </div>
       <span class="cat-sub" id="cat-count"></span>
     </div>
@@ -191,6 +192,29 @@
   <div class="dlg-body" id="req-dlg-body"></div>
   <div class="dlg-foot">
     <button class="btn quiet" type="button" data-close>Close</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-finder" class="dlg-wide">
+  <div class="dlg-head">
+    <h2>Course finder</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body">
+    <p class="cat-sub">Courses that fit around what you already have — with your sections where they are, or after moving some of them.</p>
+    <div class="fd-filters">
+      <input id="fd-q" class="fd-input" type="search" placeholder="Code or title" autocomplete="off">
+      <select class="select" id="fd-subj"></select>
+      <select class="select" id="fd-level"><option value="">All levels</option><option value="UG">Undergraduate</option><option value="GR">Graduate</option><option value="PREP">Preparatory</option></select>
+      <select class="select" id="fd-req"></select>
+    </div>
+    <div class="fd-toggles">
+      <label><input type="checkbox" id="fd-move" checked> Allow moving my sections</label>
+      <label><input type="checkbox" id="fd-seats"> Only sections with seats left</label>
+      <label><input type="checkbox" id="fd-taken" checked> Hide courses I've passed</label>
+    </div>
+    <p class="cat-sub" id="fd-status"></p>
+    <div id="fd-results" class="fd-results"></div>
   </div>
 </dialog>
 

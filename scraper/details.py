@@ -30,7 +30,9 @@ import datetime as dt
 import json
 import re
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -379,6 +381,9 @@ def main(argv=None) -> int:
     ap.add_argument("--refresh", action="store_true", help="re-fetch courses already stored")
     ap.add_argument("--source", choices=["both", "syllabus", "catalog"], default="both")
     ap.add_argument("--delay", type=float, default=0.8, help="seconds between courses (default 0.8)")
+    ap.add_argument("--workers", type=int, default=6, help="courses fetched in parallel (default 6)")
+    ap.add_argument("--budget", type=float, default=0,
+                    help="minutes to spend before saving and stopping (default 0 = no limit)")
     ap.add_argument("--dump", help="save the first page fetched to this file and stop")
     ap.add_argument("--html", help="parse a saved page and print what the parsers find")
     args = ap.parse_args(argv)
@@ -405,6 +410,7 @@ def main(argv=None) -> int:
     known = json.loads((data_dir / "info-all.json").read_text(encoding="utf-8")).get("courses", {}) \
         if (data_dir / "info-all.json").exists() else {}
     session = make_session()
+    deadline = time.monotonic() + args.budget * 60 if args.budget > 0 else float("inf")
 
     for term in terms:
         schedule = json.loads((data_dir / f"{term}.json").read_text(encoding="utf-8"))
@@ -443,17 +449,34 @@ def main(argv=None) -> int:
             store["updated"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             out_path.write_text(json.dumps(store, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
-        for i, course in enumerate(todo, 1):
-            print(f"  [{i}/{len(todo)}] {course['code']}")
-            info = course_details(session, term, course, Path(args.dump) if args.dump else None, args.source)
-            if args.dump:
+        if args.dump:
+            if todo:
+                print(f"  [1/1] {todo[0]['code']}")
+                course_details(session, term, todo[0], Path(args.dump), args.source)
                 return 0
-            store["courses"][course["code"]] = info
-            known[course["code"]] = {**info, "term": term}
-            if i % 25 == 0:
-                flush()
+            continue
+
+        lock = threading.Lock()
+        done = {"n": 0}
+
+        def work(course):
+            if time.monotonic() > deadline:
+                return
+            info = course_details(session, term, course, None, args.source)
+            with lock:
+                store["courses"][course["code"]] = info
+                known[course["code"]] = {**info, "term": term}
+                done["n"] += 1
+                if done["n"] % 25 == 0:
+                    flush()
+                    print(f"  {done['n']}/{len(todo)}")
             time.sleep(args.delay)
+
+        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            list(pool.map(work, todo))
         flush()
+        if done["n"] < len(todo):
+            print(f"  budget reached after {done['n']}/{len(todo)} — the next run picks up the rest")
         described = sum(1 for v in store["courses"].values() if v.get("desc"))
         tagged = sum(1 for v in store["courses"].values() if v.get("eng") or v.get("bs"))
         print(f"{out_path}: {len(store['courses'])} courses, {described} described, "

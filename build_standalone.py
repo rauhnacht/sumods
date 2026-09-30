@@ -31,11 +31,17 @@ def main():
     program_index = json.loads((programs_dir / "index.json").read_text(encoding="utf-8")) \
         if (programs_dir / "index.json").exists() else None
     program_files = {p.stem: json.loads(p.read_text(encoding="utf-8"))
-                     for p in programs_dir.glob("*.json") if p.stem != "index"} if programs_dir.exists() else {}
+                     for p in programs_dir.glob("*.json")
+                     if p.stem not in ("index", "overrides")} if programs_dir.exists() else {}
+    overrides_path = programs_dir / "overrides.json"
+    program_overrides = json.loads(overrides_path.read_text(encoding="utf-8")) if overrides_path.exists() else None
     catalog_path = ROOT / "data" / "catalog.json"
     bundle = {
         "programIndex": program_index,
         "programFiles": program_files,
+        "programOverrides": program_overrides,
+        "infoAll": json.loads((ROOT / "data" / "info-all.json").read_text(encoding="utf-8"))
+                   if (ROOT / "data" / "info-all.json").exists() else None,
         "catalog": json.loads(catalog_path.read_text(encoding="utf-8")) if catalog_path.exists() else None,
         "programs": json.loads(programs_path.read_text(encoding="utf-8")).get("programs", [])
         if programs_path.exists() else [],

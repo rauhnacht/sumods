@@ -283,6 +283,20 @@ def default_entries(newest: str) -> list[str]:
     return sorted(out, reverse=True)
 
 
+def complete(store: dict, term: str) -> bool:
+    """Stored and with its elective lists filled (runs before the p_list_courses fix left
+    core/area/free empty — those get fetched again)."""
+    entry = store["entries"].get(term)
+    for _ in range(20):
+        if not entry or "sameAs" not in entry:
+            break
+        entry = store["entries"].get(entry["sameAs"])
+    if not entry or "groups" not in entry:
+        return False
+    return all(g.get("courses") or g.get("any") for g in entry["groups"]
+               if g.get("kind") in ("core", "area", "free", "faculty"))
+
+
 def digest(entry: dict) -> str:
     return hashlib.sha1(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -346,6 +360,10 @@ def main(argv=None) -> int:
     ap.add_argument("--entries", nargs="*", help="entry terms (default: fall + spring since 2019)")
     ap.add_argument("--data", default=str(Path(__file__).resolve().parent.parent / "data"))
     ap.add_argument("--delay", type=float, default=1.0)
+    ap.add_argument("--refresh", action="store_true",
+                    help="re-fetch every entry term, not just the recent ones and those still incomplete")
+    ap.add_argument("--budget", type=float, default=0,
+                    help="minutes to spend before saving and stopping (default 0 = no limit)")
     ap.add_argument("--no-areas", action="store_true",
                     help="skip the extra per-area fetches for core/area/free/faculty course lists")
     ap.add_argument("--html", help="parse a saved degree_detail page (summary + inline lists)")
@@ -389,14 +407,27 @@ def main(argv=None) -> int:
         return 0
 
     session = make_session()
+    deadline = time.monotonic() + args.budget * 60 if args.budget > 0 else float("inf")
     out_dir.mkdir(parents=True, exist_ok=True)
     index = []
     for program in args.programs:
+        if time.monotonic() > deadline:
+            break
         path = out_dir / f"{program}.json"
         store = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {
             "program": program, "name": PROGRAMS.get(program, program), "entries": {}}
         hashes = {}
+        for t, e in store["entries"].items():
+            if "sameAs" not in e:
+                hashes.setdefault(digest({k: v for k, v in e.items() if k != "source"}), t)
+        recent = set(sorted(entries, reverse=True)[:2])     # this year's cohorts can still change
         for entry_term in entries:
+            if time.monotonic() > deadline:
+                print("  budget reached — saving; the next run continues from here")
+                break
+            have = store["entries"].get(entry_term)
+            if not args.refresh and have and entry_term not in recent and complete(store, entry_term):
+                continue                                    # an older cohort's rules don't change
             url = URL.format(term=entry_term, program=program)
             print(f"{program} {entry_term}")
             try:

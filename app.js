@@ -9,7 +9,7 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_FULL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const COLORS = 8;
 const DAY_START = 8 * 60 + 40;
-const DAY_END = 17 * 60 + 40;
+const DAY_END = 19 * 60 + 40;   // always show the evening slots through 19:30
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -40,6 +40,14 @@ function activeTermCode(dateStr) {
 function defaultTermCode(terms) {
   const active = activeTermCode();
   return terms.some((t) => t.code === active) ? active : terms[0].code;
+}
+
+/** Level by course number (Banner's own level list names every level for most courses):
+ * 0xx preparatory/language, 1xx–4xx and 48xxx undergraduate, 5xx and up graduate. */
+function levelOf(num) {
+  const d = String(num || '').charAt(0);
+  if (d === '0') return 'PREP';
+  return /[1-4]/.test(d) ? 'UG' : /[5-9]/.test(d) ? 'GR' : 'UG';
 }
 
 function istanbulToday() {
@@ -160,17 +168,20 @@ async function loadOverrides() {
 }
 
 function applyOverrides(entry, code, entryTerm, overrides) {
-  const relevant = overrides.filter((o) => o.program === code
-    && (!o.entries || ((!o.entries.from || entryTerm >= o.entries.from) && (!o.entries.to || entryTerm <= o.entries.to))));
+  const forProgram = (o) => o.program === '*' || o.program === code || (Array.isArray(o.program) && o.program.includes(code));
+  const inRange = (o) => !o.entries || ((!o.entries.from || entryTerm >= o.entries.from) && (!o.entries.to || entryTerm <= o.entries.to));
+  const relevant = overrides.filter((o) => forProgram(o) && inRange(o));
   if (!relevant.length) return entry;
-  const groups = (entry.groups || []).map((g) => ({ ...g, courses: g.courses ? g.courses.slice() : g.courses }));
+  const groups = (entry.groups || []).map((g) => ({ ...g, courses: g.courses ? g.courses.slice() : g.courses, rules: (g.rules || []).slice() }));
   const notes = [];
   for (const o of relevant) {
     const group = groups.find((g) => g.name === o.group || g.kind === o.group);
-    if (!group || !group.courses) continue;
-    const i = group.courses.findIndex((slot) => slotCodes(slot).includes(o.replace));
-    if (i === -1) continue;
-    group.courses[i] = o.with;
+    if (!group) continue;
+    if (o.rules) group.rules.push(...o.rules);          // e.g. "one HUM 2xx course"
+    if (o.replace && group.courses) {
+      const i = group.courses.findIndex((slot) => slotCodes(slot).includes(o.replace));
+      if (i !== -1) group.courses[i] = o.with;
+    }
     if (o.note) notes.push(o.note);
   }
   return { ...entry, groups, notes: [...(entry.notes || []), ...notes] };
@@ -197,7 +208,21 @@ async function loadRequirements(code, entryTerm) {
   return { code, name: file.name, entry: term, ...patched };
 }
 
-const courseInfo = (code) => (App.info && App.info.courses ? App.info.courses[code] || null : null);
+/** Details for a course: this term's scrape first, then any term's (data/info-all.json) —
+ * prerequisites and ECTS rarely change, so a term that was never scraped still shows them. */
+function courseInfo(code) {
+  const own = App.info && App.info.courses ? App.info.courses[code] : null;
+  const any = App.infoAll && App.infoAll.courses ? App.infoAll.courses[code] : null;
+  if (own && any) return { ...any, ...own };
+  return own || any || null;
+}
+
+async function loadInfoAll() {
+  if (App.infoAll !== undefined) return App.infoAll;
+  if (window.SUMODS_DATA) { App.infoAll = window.SUMODS_DATA.infoAll || null; return App.infoAll; }
+  App.infoAll = await fetchJSON('data/info-all.json').catch(() => null);
+  return App.infoAll;
+}
 
 /** Term dates and days off from scraper/calendar.py. Optional. */
 async function loadSide(code, kind) {
@@ -330,11 +355,11 @@ function requirementGroups(code, key = 'prereqCodes') {
 
 /** Courses in this term whose prerequisites name `code`. */
 function unlockedBy(code) {
-  if (!App.info || !App.info.courses) return [];
+  const pool = new Set([...Object.keys((App.info && App.info.courses) || {}), ...Object.keys((App.infoAll && App.infoAll.courses) || {})]);
   const out = [];
-  for (const [other, info] of Object.entries(App.info.courses)) {
+  for (const other of pool) {
     if (other === code || !App.idx.byCode.has(other)) continue;
-    if ((info.prereqCodes || []).some((group) => group.includes(code))) out.push(other);
+    if ((requirementGroups(other) || []).some((group) => group.includes(code))) out.push(other);
   }
   return out.sort((a, b) => naturalKey(a).localeCompare(naturalKey(b)));
 }
@@ -413,7 +438,7 @@ function indexTerm(raw) {
     const [subj, num] = c.code.split(' ');
     const course = {
       code: c.code, title: c.title, credits: c.credits ?? null, subj, num,
-      level: c.level || (/^[0-4]/.test(num) ? 'UG' : 'GR'),
+      level: levelOf(num),
       components: [], lectureGroups: new Set(), lecture: null,
     };
     for (const comp of c.components) {
@@ -787,7 +812,8 @@ function laneLayout(blocks, clustered) {
 }
 
 function blockBody(b, size) {
-  const cls = ['blk', `c${b.color}`, b.cls || ''].concat(size).filter(Boolean).join(' ');
+  const part = b.kind === 'custom' ? '' : b.type ? 'sub' : 'lec';   // lecture vs recitation/lab shade
+  const cls = ['blk', `c${b.color}`, part, b.cls || ''].concat(size).filter(Boolean).join(' ');
   const group = b.group && b.group !== '0' ? `<span class="b-grp">${esc(b.group)}</span>` : '';
   const where = b.where ? `<span class="b-where">${esc(b.where)}</span>` : '';
   const label = `${b.code} ${b.group}, ${DAYS_FULL[b.day]} ${hhmm(b.start)} to ${hhmm(b.end)}${b.where ? `, ${b.where}` : ''}`;
@@ -1142,6 +1168,7 @@ function renderSummary(pairs) {
   $('#actions').innerHTML = codes.length || customEvents().length ? [
     '<button class="btn primary" id="act-crn" type="button">CRNs for registration</button>',
     '<button class="btn" id="act-arrange" type="button">Optimiser</button>',
+    '<button class="btn" id="act-finder" type="button">Course finder</button>',
     '<button class="btn" id="act-export" type="button">Add to calendar</button>',
     '<button class="btn" id="act-image" type="button">Save as image</button>',
     '<button class="btn" id="act-event" type="button">+ Event</button>',
@@ -1350,7 +1377,7 @@ function renderCatalog() {
   const level = App.catLevel || 'all';
   let list = q.trim() ? searchCourses(q, 400) : App.idx.courses;
   if (subj !== 'all') list = list.filter((c) => c.subj === subj);
-  if (level !== 'all') list = list.filter((c) => c.level.includes(level === 'ug' ? 'UG' : 'GR'));
+  if (level !== 'all') list = list.filter((c) => c.level === ({ ug: 'UG', gr: 'GR', prep: 'PREP' })[level]);
   App.catalogList = list;
   const shown = list.slice(0, App.catalogLimit);
   $('#cat-count').textContent = `${list.length} course${list.length === 1 ? '' : 's'}`;
@@ -1376,7 +1403,7 @@ function courseDetailHTML(course, { heading = false } = {}) {
   const meta = [];
   if (course.credits !== null) meta.push(`${course.credits} SU credits`);
   if (info.ects) meta.push(`${info.ects} ECTS`);
-  meta.push(course.level === 'GR' ? 'Graduate' : course.level === 'UG' ? 'Undergraduate' : course.level);
+  meta.push(({ GR: 'Graduate', UG: 'Undergraduate', PREP: 'Preparatory / language' })[course.level] || course.level);
   if (info.language) meta.push(info.language);
 
   const extras = [
@@ -1759,7 +1786,65 @@ function requirementProgress(program) {
   const isSlotList = (group) => (group.courses || []).length
     && (group.kind === 'required' || group.kind === 'university') && !group.credits && !group.minCourses;
 
-  return (program.groups || []).filter((g) => g.kind !== 'total').map((group) => {
+  const OVERLAY = new Set(['faculty', 'basicscience', 'engineering']);
+  const groups = (program.groups || []).filter((g) => g.kind !== 'total');
+  const results = new Map();
+  const ruleStatus = (group) => (group.rules || []).map((rule) => {
+    let re;
+    try { re = new RegExp(rule.match); } catch { return null; }
+    const hits = planned.filter((c) => passed(c) && re.test(c.code));
+    const taken = hits.filter((c) => c.grade);
+    return { ...rule, taken: taken.length, planned: hits.length, met: taken.length >= (rule.min || 1),
+      codes: hits.map((c) => c.code) };
+  }).filter(Boolean);
+
+  // Faculty Courses, Engineering and Basic Science sit on top of the other areas: a course
+  // counted as a core elective can also be one of your faculty courses, and its engineering
+  // ECTS count too. So they are measured over everything you take, not fed from leftovers.
+  const overlay = (group) => {
+    if (group.kind === 'faculty') {
+      const listed = new Set(flatCourseCodes(group.courses));
+      const matches = planned.filter((c) => passed(c) && (listed.size ? listed.has(c.code) : group.any))
+        .map((c) => ({ ...c, credits: creditsOf(c, group), ects: ectsOf(c) }));
+      return { matches, value: matches.length };
+    }
+    const key = group.kind === 'engineering' ? 'eng' : 'bs';
+    const matches = planned.filter(passed).map((c) => ({ ...c, share: (courseInfo(c.code) || {})[key] || 0 }))
+      .filter((c) => c.share > 0).map((c) => ({ ...c, credits: creditsOf(c, group), ects: ectsOf(c) }));
+    return { matches, value: matches.reduce((n, m) => n + m.share, 0) };
+  };
+  const anyTagged = () => {
+    const all = { ...((App.infoAll && App.infoAll.courses) || {}), ...((App.info && App.info.courses) || {}) };
+    return Object.values(all).some((i) => i && (i.eng || i.bs));
+  };
+
+  for (const group of groups) {
+    if (OVERLAY.has(group.kind)) continue;
+    results.set(group, primary(group));
+  }
+  for (const group of groups) {
+    if (!OVERLAY.has(group.kind)) continue;
+    const { matches, value } = overlay(group);
+    const doneTaken = (list) => list.filter((m) => m.grade);
+    if (group.kind === 'faculty') {
+      results.set(group, {
+        group, matches, doneCredits: matches.reduce((n, m) => n + m.credits, 0), ects: 0,
+        earned: earnedCredits(matches), target: null,
+        targetCount: group.minCourses || group.choose || null, missing: [], rules: ruleStatus(group),
+        takenCount: doneTaken(matches).length,
+      });
+    } else {
+      const target = group.ects || group.credits || null;
+      const earnedShare = doneTaken(matches).reduce((n, m) => n + m.share, 0);
+      results.set(group, {
+        group: { ...group, untracked: group.untracked && !anyTagged() }, matches, doneCredits: value, ects: 0,
+        earned: earnedShare, target, unit: group.ects ? 'ECTS' : 'cr', targetCount: null, missing: [], rules: [],
+      });
+    }
+  }
+  return groups.map((g) => results.get(g));
+
+  function primary(group) {
     const matches = [];
     let missing = [];
 
@@ -1799,8 +1884,9 @@ function requirementProgress(program) {
       target: group.credits || null,
       targetCount: group.minCourses || group.choose || (group.courses && !group.credits ? group.courses.length : null),
       missing,
+      rules: ruleStatus(group),
     };
-  });
+  }
 }
 
 /** Required and core courses of the chosen programme — seniors may take these on day one. */
@@ -1853,9 +1939,9 @@ function requirementBlockHTML(program, slot) {
     ${program.example ? '<p class="banner" style="margin-bottom:10px">Example programme data — replace data/programs.json with your own.</p>' : ''}
     ${program.totalCredits ? `<p class="cat-sub">Graduation needs ${esc(program.totalCredits)} SU credits${program.totalEcts ? ` and ${esc(program.totalEcts)} ECTS` : ''}${program.entry && program.entry !== 'any' ? ` for students who entered in ${esc(termLabel(program.entry))}` : ''}.</p>` : ''}
     ${(program.notes || []).map((n) => `<p class="cat-sub">${esc(n)}</p>`).join('')}
-    <div class="req-grid">${progress.map(({ group, matches, doneCredits, earned: got, target, targetCount, missing, ects }, i) => {
+    <div class="req-grid">${progress.map(({ group, matches, doneCredits, earned: got, target, targetCount, missing, ects, unit, rules }, i) => {
       const parts = [];
-      if (target) parts.push(`${doneCredits}/${target} cr`);
+      if (target) parts.push(`${Math.round(doneCredits * 10) / 10}/${target} ${unit || 'cr'}`);
       if (targetCount && (group.minCourses || !target)) parts.push(`${matches.length}/${targetCount} courses`);
       if (group.ects && ects) parts.push(`${ects}/${group.ects} ECTS`);
       const label = parts.join(', ') || `${matches.length} courses`;
@@ -1872,6 +1958,7 @@ function requirementBlockHTML(program, slot) {
         <div class="bar"><span style="width:${Math.round(ratio * 100)}%"></span>
           ${earnedRatio ? `<i style="width:${Math.round(earnedRatio * 100)}%"></i>` : ''}</div>
         ${missing.length && missing.length <= 8 ? `<p class="req-missing">Left: ${missing.map((c) => esc(c)).join(', ')}</p>` : ''}
+        ${(rules || []).map((r) => `<p class="req-rule ${r.met ? 'met' : r.planned ? 'planned' : ''}">${r.met ? '✓' : r.planned ? '◐' : '○'} ${esc(r.label)}</p>`).join('')}
       </button>`;
     }).join('')}</div>`;
 }
@@ -1914,7 +2001,7 @@ function renderRequirementsDialog() {
   const progress = requirementProgress(program);
   const gi = Math.max(0, Math.min(groupIndex, progress.length - 1));
   App.reqDialog.groupIndex = gi;
-  const { group, matches, doneCredits, earned: got, target, targetCount, ects } = progress[gi];
+  const { group, matches, doneCredits, earned: got, target, targetCount, ects, unit, rules } = progress[gi];
 
   $('#req-dlg-title').textContent = program.name;
   $('#req-tabs').innerHTML = progress.map((p, i) =>
@@ -1924,7 +2011,7 @@ function renderRequirementsDialog() {
   const earnedRatio = target ? Math.min(1, got / target)
     : targetCount ? Math.min(1, matches.filter((m) => courseStatus(m.code).state === 'taken').length / targetCount) : 0;
   const parts = [];
-  if (target) parts.push(`${doneCredits}/${target} cr (${got} earned)`);
+  if (target) parts.push(`${Math.round(doneCredits * 10) / 10}/${target} ${unit || 'cr'} (${Math.round(got * 10) / 10} earned)`);
   if (targetCount && (group.minCourses || !target)) parts.push(`${matches.length}/${targetCount} courses`);
   if (group.ects && ects) parts.push(`${ects}/${group.ects} ECTS`);
 
@@ -1933,11 +2020,13 @@ function renderRequirementsDialog() {
     const known = codes.map((c) => (creditsMap[c] || [])[0]).find((v) => v !== undefined) ?? group.creditsEach;
     return known !== undefined ? `${known} SU` : '';
   };
+  const shareKey = group.kind === 'engineering' ? 'eng' : group.kind === 'basicscience' ? 'bs' : null;
+  const shareOf = shareKey ? (codes) => `${(courseInfo(codes[0]) || {})[shareKey] || 0} ${shareKey === 'eng' ? 'Eng' : 'BS'} ECTS` : null;
   const poolRow = (labelCode, status, titleText, codes) => `<div class="req-pool-row req-pool-${status.state}">
     <span class="req-pool-dot"></span>
     <span class="req-pool-code">${esc(labelCode)}</span>
     <span class="req-pool-title">${esc(titleText || '')}</span>
-    <span class="req-pool-credits">${esc(creditsBadge(codes))}</span>
+    <span class="req-pool-credits">${esc(shareOf ? shareOf(codes) : creditsBadge(codes))}</span>
     <span class="req-pool-status">${esc(REQ_STATUS_LABEL[status.state])}${status.course && status.course.grade ? ` · ${esc(status.course.grade)}` : ''}</span>
   </div>`;
 
@@ -1975,6 +2064,8 @@ function renderRequirementsDialog() {
       <span><i class="req-pool-dot req-pool-planned"></i>Planned</span>
       <span><i class="req-pool-dot req-pool-open"></i>Not taken</span>
     </div>
+    ${(rules || []).length ? `<div class="req-rules">${rules.map((r) => `<div class="req-rule ${r.met ? 'met' : r.planned ? 'planned' : ''}">
+      ${r.met ? '✓' : r.planned ? '◐' : '○'} ${esc(r.label)}${r.codes.length ? ` — ${esc(r.codes.join(', '))}` : ''}</div>`).join('')}</div>` : ''}
     <div class="req-pool-list">${rowsHTML}</div>`;
 }
 
@@ -3023,6 +3114,184 @@ async function saveTimetableImage() {
   }
 }
 
+/* ------------------------------------------------------------- course finder */
+
+/** Meetings that a new course must not overlap: your own events plus every visible course,
+ * except courses whose clashes you've waived (those are allowed to overlap anyway). */
+function finderBusy(excludeCodes = new Set()) {
+  const busy = customMeetings();
+  for (const code of tt().order) {
+    const e = tt().courses[code];
+    if (!e || e.hidden || excludeCodes.has(code) || isWaivedClash(code)) continue;
+    const course = App.idx.byCode.get(code);
+    if (!course) continue;
+    course.components.forEach((comp) => {
+      const sec = App.idx.byCrn.get(e.sel[comp.type]);
+      if (sec) busy.push(...sec.meetings);
+    });
+  }
+  return busy;
+}
+
+const overlapsAny = (meetings, busy) => meetings.some((m) => busy.some((o) => o.day === m.day && m.start < o.end && o.start < m.end));
+
+/**
+ * Can `code` join the timetable? First with everything left where it is; if that fails and
+ * moving is allowed, search section swaps of your current courses (fewest changes first) for
+ * an arrangement where everything fits. Returns null, {how:'asis', sel} or
+ * {how:'moved', sel, picks, moved}.
+ */
+function fitCourse(code, { move = true, seatsOnly = false } = {}) {
+  const course = App.idx.byCode.get(code);
+  if (!course) return null;
+  let cand = courseCombos(course, { limit: 400 });
+  if (seatsOnly) cand = cand.filter((cb) => !cb.full);
+  if (!cand.length) return null;
+  const busy = finderBusy();
+  const direct = cand.find((cb) => !overlapsAny(cb.meetings, busy));
+  if (direct) return { how: 'asis', sel: direct.sel };
+  if (!move) return null;
+
+  const mine = tt().order.filter((c) => !tt().courses[c].hidden && App.idx.byCode.has(c) && !isWaivedClash(c));
+  const fixed = finderBusy(new Set(mine));             // custom events + waived courses stay put
+  const sets = mine.map((c) => {
+    const current = tt().courses[c].sel;
+    let combos = courseCombos(App.idx.byCode.get(c), { current, limit: 200 });
+    if (seatsOnly) combos = combos.filter((cb) => !cb.full || Object.keys(cb.sel).every((k) => cb.sel[k] === current[k]));
+    return combos.map((cb) => ({ ...cb, code: c, changes: Object.keys(cb.sel).filter((k) => cb.sel[k] !== current[k]).length }))
+      .sort((a, b) => a.changes - b.changes);
+  });
+  sets.push(cand.map((cb) => ({ ...cb, code, changes: 0 })));
+  const order = sets.map((s, i) => i).sort((a, b) => sets[a].length - sets[b].length);
+  const dayBusy = [[], [], [], [], [], [], []];
+  fixed.forEach((m) => dayBusy[m.day].push(m));
+  const picks = [];
+  let nodes = 0;
+  let best = null;
+
+  const fits = (cb) => cb.meetings.every((m) => dayBusy[m.day].every((o) => !(m.start < o.end && o.start < m.end)));
+  const dfs = (depth, changes) => {
+    if (nodes++ > 6000 || (best && changes >= best.changes)) return;
+    if (depth === order.length) { best = { changes, picks: picks.slice() }; return; }
+    for (const cb of sets[order[depth]]) {
+      if (!fits(cb)) continue;
+      cb.meetings.forEach((m) => dayBusy[m.day].push(m));
+      picks[depth] = cb;
+      dfs(depth + 1, changes + cb.changes);
+      cb.meetings.forEach((m) => dayBusy[m.day].splice(dayBusy[m.day].lastIndexOf(m), 1));
+      if (best && best.changes <= 1) return;           // good enough: one swap
+    }
+  };
+  dfs(0, 0);
+  if (!best) return null;
+  const byCode = Object.fromEntries(best.picks.map((cb) => [cb.code, cb.sel]));
+  const moved = mine.filter((c) => Object.keys(byCode[c]).some((k) => byCode[c][k] !== tt().courses[c].sel[k]));
+  return { how: 'moved', sel: byCode[code], picks: byCode, moved };
+}
+
+function finderRequirementOptions() {
+  const out = ['<option value="">Any requirement</option>'];
+  activePrograms().forEach((program, pi) => (program.groups || []).forEach((g, gi) => {
+    if (g.kind === 'total') return;
+    out.push(`<option value="${pi}:${gi}">${esc(program.code || program.name)} · ${esc(g.name)}</option>`);
+  }));
+  return out.join('');
+}
+
+function countsToward(code, pick) {
+  if (!pick) return true;
+  const [pi, gi] = pick.split(':').map(Number);
+  const group = ((activePrograms()[pi] || {}).groups || [])[gi];
+  if (!group) return true;
+  if (group.kind === 'engineering' || group.kind === 'basicscience') {
+    return ((courseInfo(code) || {})[group.kind === 'engineering' ? 'eng' : 'bs'] || 0) > 0;
+  }
+  const listed = flatCourseCodes(group.courses);
+  if (listed.length) return listed.includes(code);
+  if (group.match) { try { return new RegExp(`^${group.match}$`).test(code); } catch { return false; } }
+  return group.kind === 'free' || !!group.any;
+}
+
+function openFinder() {
+  const subjects = [...new Set([...App.idx.byCode.values()].map((c) => c.subj))].sort();
+  $('#fd-subj').innerHTML = '<option value="">All subjects</option>' + subjects.map((s) => `<option>${esc(s)}</option>`).join('');
+  $('#fd-req').innerHTML = finderRequirementOptions();
+  $('#fd-results').innerHTML = '';
+  $('#dlg-finder').showModal();
+  runFinder();
+}
+
+async function runFinder() {
+  const run = (App.finderRun = (App.finderRun || 0) + 1);
+  const q = fold($('#fd-q').value.trim());
+  const subj = $('#fd-subj').value;
+  const level = $('#fd-level').value;
+  const req = $('#fd-req').value;
+  const move = $('#fd-move').checked;
+  const seatsOnly = $('#fd-seats').checked;
+  const hideTaken = $('#fd-taken').checked;
+  const taken = new Set(allPlanned().filter((c) => c.grade && !FAILING_GRADES.includes(c.grade)).map((c) => c.code));
+  const pool = [...App.idx.byCode.values()].filter((c) => !entry(c.code)
+    && (!subj || c.subj === subj) && (!level || c.level === level)
+    && (!hideTaken || !taken.has(c.code))
+    && (!q || fold(`${c.code} ${c.title}`).includes(q) || fold(c.code.replace(/\s+/g, '')).includes(q))
+    && countsToward(c.code, req))
+    .sort((a, b) => naturalKey(a.code).localeCompare(naturalKey(b.code)));
+
+  const found = [];
+  const status = $('#fd-status');
+  for (let i = 0; i < pool.length; i += 1) {
+    if (run !== App.finderRun || !$('#dlg-finder').open) return;
+    const fit = fitCourse(pool[i].code, { move, seatsOnly });
+    if (fit) found.push({ course: pool[i], fit });
+    if (i % 15 === 14) {
+      status.textContent = `Checking ${i + 1} of ${pool.length}…`;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+  if (run !== App.finderRun) return;
+  found.sort((a, b) => (a.fit.how === 'asis' ? 0 : 1) - (b.fit.how === 'asis' ? 0 : 1));
+  App.finderFound = found;
+  const asis = found.filter((f) => f.fit.how === 'asis').length;
+  status.textContent = `${found.length} of ${pool.length} course${pool.length === 1 ? '' : 's'} fit — ${asis} as your timetable is, ${found.length - asis} if you move a section.`;
+  const row = ({ course, fit }, i) => {
+    const how = fit.how === 'asis' ? '' : `<span class="fd-badge move">move ${esc(fit.moved.map((c) => {
+      const secs = App.idx.byCode.get(c).components.map((comp) => App.idx.byCrn.get(fit.picks[c][comp.type])).filter(Boolean);
+      return `${c} → ${secs.map((s) => s.group).join('/')}`;
+    }).join(', '))}</span>`;
+    const secs = course.components.map((comp) => App.idx.byCrn.get(fit.sel[comp.type])).filter(Boolean);
+    const when = secs.flatMap((s) => s.meetings.map((m) => `${DAYS[m.day]} ${hhmm(m.start)}`)).join(', ');
+    return `<div class="fd-row">
+      <div class="fd-main"><b>${esc(course.code)}</b> <span>${esc(course.title)}</span>
+        <div class="fd-sub">${course.credits != null ? `${esc(course.credits)} cr · ` : ''}${esc(when || 'no fixed time')} ${how}</div></div>
+      <button type="button" class="btn" data-fd-info="${esc(course.code)}">Info</button>
+      <button type="button" class="btn primary" data-fd-add="${i}">Add</button>
+    </div>`;
+  };
+  const moved = found.map((f, i) => [f, i]).filter(([f]) => f.fit.how === 'moved');
+  const kept = found.map((f, i) => [f, i]).filter(([f]) => f.fit.how === 'asis');
+  $('#fd-results').innerHTML = !found.length
+    ? '<p class="empty-note">Nothing fits with these filters. Try allowing section moves or widening the filters.</p>'
+    : `${kept.length ? `<h3 class="side-head"><span class="fd-badge ok">Fits as is</span> ${kept.length}</h3>${kept.map(([f, i]) => row(f, i)).join('')}` : ''}
+       ${moved.length ? `<h3 class="side-head" style="margin-top:10px"><span class="fd-badge move">Fits if you move a section</span> ${moved.length}</h3>${moved.map(([f, i]) => row(f, i)).join('')}` : ''}`;
+}
+
+function addFromFinder(i) {
+  const hit = App.finderFound && App.finderFound[i];
+  if (!hit || entry(hit.course.code)) return;
+  const { course, fit } = hit;
+  pushUndo(`add ${course.code}`);
+  const t = tt();
+  if (fit.how === 'moved') fit.moved.forEach((c) => { t.courses[c].sel = { ...fit.picks[c] }; });
+  t.courses[course.code] = { color: nextColor(), hidden: false, sel: { ...fit.sel } };
+  t.order.push(course.code);
+  save();
+  render();
+  toast(`${course.code} added${fit.how === 'moved' ? ` — moved ${fit.moved.join(', ')}` : ''}`, { action: 'Undo', onAction: undo });
+  runFinder();                                          // the timetable changed, so re-check the rest
+}
+
 /* --------------------------------------------------------------- chrome */
 
 function toast(message, { action, onAction, timeout = 6000 } = {}) {
@@ -3106,10 +3375,10 @@ async function setTerm(code, { silent = false } = {}) {
   App.calendar = null;
   App.exams = null;
   App.regdays = null;
-  loadInfo(code).then((info) => {
+  Promise.all([loadInfo(code), loadInfoAll()]).then(([info]) => {
     if (store.term !== code) return;
     App.info = info;
-    if (info) render();
+    if (info || App.infoAll) render();
   });
   loadSide(code, 'calendar').then((cal) => {
     if (store.term === code) App.calendar = cal;
@@ -3324,6 +3593,7 @@ function bindEvents() {
     const id = e.target.closest('button')?.id;
     if (id === 'act-crn') openCrnDialog();
     if (id === 'act-arrange') $('#dlg-arrange').showModal();
+    if (id === 'act-finder') openFinder();
     if (id === 'act-export') openExportDialog();
     if (id === 'act-image') saveTimetableImage();
     if (id === 'act-event') openEventDialog(null);
@@ -3363,6 +3633,16 @@ function bindEvents() {
 
   // dialogs
   $$('[data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
+  let finderTimer = null;
+  const rerunFinder = () => { clearTimeout(finderTimer); finderTimer = setTimeout(runFinder, 250); };
+  ['#fd-q'].forEach((s) => $(s).addEventListener('input', rerunFinder));
+  ['#fd-subj', '#fd-level', '#fd-req', '#fd-move', '#fd-seats', '#fd-taken'].forEach((s) => $(s).addEventListener('change', runFinder));
+  $('#fd-results').addEventListener('click', (e) => {
+    const add = e.target.closest('[data-fd-add]');
+    if (add) { addFromFinder(Number(add.dataset.fdAdd)); return; }
+    const info = e.target.closest('[data-fd-info]');
+    if (info) openCourseDialog(info.dataset.fdInfo);
+  });
   $('#dlg-requirements').addEventListener('click', (e) => {
     const tab = e.target.closest('[data-req-tab]');
     if (tab) { App.reqDialog.groupIndex = Number(tab.dataset.reqTab); renderRequirementsDialog(); }
