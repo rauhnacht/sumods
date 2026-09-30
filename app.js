@@ -3407,6 +3407,7 @@ async function importBackup(file) {
 }
 
 function bindSettings() {
+  if (!$('#settings-btn') || !$('#dlg-settings')) return;   // page and script out of step — don't take the rest down
   $('#settings-btn').addEventListener('click', openSettings);
   $('#dlg-settings').addEventListener('click', (e) => {
     const option = e.target.closest('[data-setting] [data-value]');
@@ -3646,7 +3647,7 @@ function bindEvents() {
 
   $('#term-select').addEventListener('change', (e) => setTerm(e.target.value));
 
-  bindSettings();
+  try { bindSettings(); } catch (err) { console.error('settings', err); }
   $('#theme-btn').addEventListener('click', () => {
     const order = ['auto', 'light', 'dark'];
     store.prefs.theme = order[(order.indexOf(store.prefs.theme) + 1) % order.length];
@@ -4027,6 +4028,14 @@ function bindEvents() {
 }
 
 /* -------------------------------------------------------------------- boot */
+
+/** If the page and script ever come from different deploys, say so instead of failing silently. */
+window.addEventListener('error', (e) => {
+  if (App.bootErrorShown || !document.body) return;
+  App.bootErrorShown = true;
+  console.error(e.error || e.message);
+  try { toast('Part of SUMods failed to load — refresh with Cmd+Shift+R (Ctrl+F5 on Windows).', { timeout: 12000 }); } catch { /* toast not ready */ }
+});
 
 async function boot() {
   loadStore();

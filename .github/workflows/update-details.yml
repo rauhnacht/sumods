@@ -49,7 +49,8 @@ jobs:
 
       - name: Commit course details
         if: always()
-        run: bash .github/commit-data.sh "data: course details $(date -u +%Y-%m-%d)"
+        run: |
+          bash .github/commit-data.sh "data: course details $(date -u +%Y-%m-%d)"
 
       - name: Degree requirements
         continue-on-error: true
@@ -61,4 +62,5 @@ jobs:
 
       - name: Commit degree requirements
         if: always()
-        run: bash .github/commit-data.sh "data: degree requirements $(date -u +%Y-%m-%d)"
+        run: |
+          bash .github/commit-data.sh "data: degree requirements $(date -u +%Y-%m-%d)"

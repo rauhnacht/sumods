@@ -35,6 +35,14 @@ jobs:
       - name: Pre-render course pages for search engines
         run: python build_pages.py --base "${{ secrets.SITE_URL }}"
 
+      - name: Stamp asset URLs so browsers never pair a new page with an old script
+        run: |
+          v="${GITHUB_SHA::8}"
+          sed -i -e "s|href=\"app.css\"|href=\"app.css?v=$v\"|" \
+                 -e "s|src=\"app.js\"|src=\"app.js?v=$v\"|" \
+                 -e "s|src=\"config.js\"|src=\"config.js?v=$v\"|" index.html
+          grep -n "?v=$v" index.html
+
       - name: Upload over FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
