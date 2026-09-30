@@ -16,6 +16,13 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
 
 const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
+/** Times as the user wants to read them (Settings → Time format). Form inputs keep hhmm(). */
+function clock(m) {
+  if (!store.prefs.clock12) return hhmm(m);
+  const h = Math.floor(m / 60), min = String(m % 60).padStart(2, '0');
+  return `${((h + 11) % 12) + 1}:${min} ${h < 12 ? 'am' : 'pm'}`;
+}
+
 const fold = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/ı/g, 'i').replace(/İ/g, 'i');
 
@@ -814,10 +821,13 @@ function laneLayout(blocks, clustered) {
 function blockBody(b, size) {
   const part = b.kind === 'custom' ? '' : b.type ? 'sub' : 'lec';   // lecture vs recitation/lab shade
   const cls = ['blk', `c${b.color}`, part, b.cls || ''].concat(size).filter(Boolean).join(' ');
-  const group = b.group && b.group !== '0' ? `<span class="b-grp">${esc(b.group)}</span>` : '';
-  const where = b.where ? `<span class="b-where">${esc(b.where)}</span>` : '';
+  const p = store.prefs;
+  const group = p.showGroup !== false && b.group && b.group !== '0' ? `<span class="b-grp">${esc(b.group)}</span>` : '';
+  const where = p.showRoom !== false && b.where ? `<span class="b-where">${esc(b.where)}</span>` : '';
+  const people = b.sec && b.sec.people ? b.sec.people : [];
+  const who = p.showInstructor && people.length ? `<span class="b-where">${esc(people[0].split(' ').slice(-1)[0])}</span>` : '';
   const label = `${b.code} ${b.group}, ${DAYS_FULL[b.day]} ${hhmm(b.start)} to ${hhmm(b.end)}${b.where ? `, ${b.where}` : ''}`;
-  return { cls, inner: `<span class="b-code">${esc(b.code)}</span>${group}${where}`, label };
+  return { cls, inner: `<span class="b-code">${esc(b.code)}</span>${group}${where}${who}`, label };
 }
 
 function renderGrid(host, blocks, opts = {}) {
@@ -829,7 +839,7 @@ function renderGrid(host, blocks, opts = {}) {
   if (blocks.some((b) => b.day === 5)) days.push(5);
   if (blocks.some((b) => b.day === 6)) days.push(6);
   const now = istanbulNow();
-  const showNow = opts.nowLine && days.includes(now.day) && now.min >= startMin && now.min <= endMin;
+  const showNow = store.prefs.nowLine !== false && opts.nowLine && days.includes(now.day) && now.min >= startMin && now.min <= endMin;
   const byDay = new Map(days.map((d) => [d, []]));
   blocks.forEach((b) => { if (byDay.has(b.day)) byDay.get(b.day).push(b); });
 
@@ -837,11 +847,11 @@ function renderGrid(host, blocks, opts = {}) {
   const html = [];
 
   if (orientation === 'h') {
-    const hourPx = Math.max(78, (width - 46) / hours);
+    const hourPx = Math.max(56, (width - 46) / hours);   // 08:40–19:40 fits from ~680px; narrower scrolls
     html.push(`<div class="tt tt-h" style="--hours:${hours}">`);
     html.push('<div class="tt-row"><div></div><div class="tt-axis">');
     for (let t = startMin; t <= endMin; t += 60) {
-      html.push(`<span class="tt-tick" style="left:${((t - startMin) / span) * 100}%">${hhmm(t)}</span>`);
+      html.push(`<span class="tt-tick" style="left:${((t - startMin) / span) * 100}%">${clock(t)}</span>`);
     }
     html.push('</div></div>');
     for (const day of days) {
@@ -868,7 +878,7 @@ function renderGrid(host, blocks, opts = {}) {
     days.forEach((d) => html.push(`<div class="tt-vname${d === now.day && opts.nowLine ? ' today' : ''}">${DAYS[d]}</div>`));
     html.push('</div><div class="tt-vbody"><div class="tt-vaxis">');
     for (let t = startMin; t <= endMin; t += 60) {
-      html.push(`<span style="top:${(t - startMin) * ppm}px">${hhmm(t)}</span>`);
+      html.push(`<span style="top:${(t - startMin) * ppm}px">${clock(t)}</span>`);
     }
     html.push('</div>');
     for (const day of days) {
@@ -1039,6 +1049,23 @@ function myPrograms() {
  * programme's required/core courses on day one regardless of this table at all; that part is
  * layered on afterwards in renderRegDays() via seniorDayOneCodes(), not decided here.
  */
+/** Special approval: an undergraduate course missing from this term's registration-days list,
+ * or one named in data/special-approval.json (listed, but approval-only regardless). */
+function needsApproval(code) {
+  const course = App.idx && App.idx.byCode.get(code);
+  if (!course || course.level !== 'UG') return false;
+  if (App.approval && App.approval.includes(code)) return true;
+  return !!(App.regdays && App.regdays.courses && !App.regdays.courses[code]);
+}
+
+async function loadApproval() {
+  if (App.approval) return App.approval;
+  const raw = window.SUMODS_DATA ? window.SUMODS_DATA.approval
+    : await fetchJSON('data/special-approval.json').catch(() => null);
+  App.approval = (raw && raw.courses) || [];
+  return App.approval;
+}
+
 function registrationDay(code) {
   if (!App.regdays) return null;
   const entry = App.regdays.courses[code];
@@ -1075,7 +1102,7 @@ function renderRegDays() {
     const crns = course.components.map((comp) => App.idx.byCrn.get(e.sel[comp.type])).filter(Boolean);
     rows.push({ code, crns, ...registrationDay(code), color: e.color });
   }
-  rows.sort((a, b) => (a.day || 9) - (b.day || 9) || naturalKey(a.code).localeCompare(naturalKey(b.code)));
+  rows.sort((a, b) => (needsApproval(a.code) ? 8 : a.day || 9) - (needsApproval(b.code) ? 8 : b.day || 9) || naturalKey(a.code).localeCompare(naturalKey(b.code)));
 
   const standing = classStanding();
   const senior = standing.value === 'senior';
@@ -1083,7 +1110,7 @@ function renderRegDays() {
   rows.forEach((row) => {
     if (dayOne.has(row.code) && row.day !== 1) { row.day = 1; row.senior = true; }
   });
-  rows.sort((a, b) => (a.day || 9) - (b.day || 9) || naturalKey(a.code).localeCompare(naturalKey(b.code)));
+  rows.sort((a, b) => (needsApproval(a.code) ? 8 : a.day || 9) - (needsApproval(b.code) ? 8 : b.day || 9) || naturalKey(a.code).localeCompare(naturalKey(b.code)));
 
   host.innerHTML = `
     <div class="reg-head">
@@ -1097,7 +1124,7 @@ function renderRegDays() {
       <table class="reg-table">
         <tr><th>Day</th><th>Course</th><th>CRNs</th><th></th></tr>
         ${rows.map((row) => `<tr class="${row.entry && row.entry.restricted ? 'restricted-row' : ''}">
-          <td>${row.day ? `<span class="day-badge d${row.day}${regDate(row.day) === istanbulToday() ? ' today' : ''}">Day ${row.day}${regDate(row.day) ? ` · ${esc(shortDate(regDate(row.day)))}` : ''}</span>`
+          <td>${needsApproval(row.code) ? '<span class="day-badge approval" title="Register by requesting special approval, not on a registration day">special approval</span>' : row.day ? `<span class="day-badge d${row.day}${regDate(row.day) === istanbulToday() ? ' today' : ''}">Day ${row.day}${regDate(row.day) ? ` · ${esc(shortDate(regDate(row.day)))}` : ''}</span>`
             : '<span class="day-badge none">not listed</span>'}</td>
           <td class="reg-code c${row.color}">${esc(row.code)}${row.entry && row.entry.restricted ? ' <span class="restrict-badge" title="Class restriction applies every day of registration, not just the day shown — check the catalog for which classes/levels are allowed.">⚠ restricted</span>' : ''}</td>
           <td class="reg-crns">${row.crns.map((s) => `<button type="button" class="crn-chip" data-crn="${esc(s.crn)}">${esc(s.crn)}</button>${seatBadge(s.crn)}`).join('')}</td>
@@ -1107,7 +1134,8 @@ function renderRegDays() {
           ].filter(Boolean).join(' · ')}</td>
         </tr>`).join('')}
       </table>
-      ${rows.some((r) => !r.day) ? '<p class="cat-sub">“Not listed” means the course was added after the list was issued — check the announcement.</p>' : ''}
+      ${rows.some((r) => needsApproval(r.code)) ? '<p class="cat-sub"><b>Special approval</b> courses aren\'t opened on a registration day: undergraduate courses missing from the registration-days list (and a few listed ones such as DSA 201, PROJ 201 and ENS 491) are taken by requesting special approval. A course opened after the list was issued is missing from it too — check the announcements if one looks wrong.</p>' : ''}
+      ${rows.some((r) => !r.day && !needsApproval(r.code)) ? '<p class="cat-sub">“Not listed” graduate courses register outside the undergraduate days.</p>' : ''}
       ${rows.some((r) => r.entry && r.entry.restricted) ? '<p class="cat-sub">⚠ Rows marked <b>restricted</b> carry a class restriction for the whole registration period — every day, not just the day shown here. The course catalog says exactly which classes/levels are allowed; the day badge alone isn\'t enough for these.</p>' : ''}
       ${standing.value ? `<p class="cat-sub">${esc(STANDING_LABELS[standing.value])}${standing.auto ? ` (${standing.earned} SU credits)` : ' — set in the Plan tab'}.${senior ? ` On day one you can also take your programme's required and core courses${currentProgram() ? ' — they are moved to day 1 above' : ' (pick your programme in the Plan tab to see which)'}` : ''}</p>`
         : '<p class="cat-sub">Set your class standing in the Plan tab to see if you get day-one senior registration.</p>'}
@@ -2511,7 +2539,7 @@ function crnRows() {
     const reg = registrationDay(code);
     for (const comp of course.components) {
       const sec = App.idx.byCrn.get(e.sel[comp.type]);
-      if (sec) rows.push({ crn: sec.crn, label: `${comp.code} ${sec.group}`, day: reg && reg.day });
+      if (sec) rows.push({ crn: sec.crn, label: `${comp.code} ${sec.group}`, day: needsApproval(code) ? 'approval' : reg && reg.day });
     }
   }
   return rows;
@@ -2525,11 +2553,11 @@ function openCrnDialog() {
     <div class="crn-list">${(() => {
       if (!rows.length) return '<p class="empty-note">No courses in this timetable yet.</p>';
       const grouped = App.regdays && myPrograms().length;
-      const buckets = grouped ? [1, 2, 3, null] : [undefined];
+      const buckets = grouped ? [1, 2, 3, 'approval', null] : [undefined];
       return buckets.map((day) => {
         const list = grouped ? rows.filter((r) => (r.day || null) === day) : rows;
         if (!list.length) return '';
-        const heading = !grouped ? '' : `<h3 class="side-head">${day ? `Day ${day}` : 'Not on the registration list'}</h3>`;
+        const heading = !grouped ? '' : `<h3 class="side-head">${day === 'approval' ? 'Special approval — request, don\'t register' : day ? `Day ${day}` : 'Not on the registration list'}</h3>`;
         return heading + list.map((r) => `<button class="crn-row" type="button" data-crn="${esc(r.crn)}">
           <span class="crn-num">${esc(r.crn)}</span><span class="crn-for">${esc(r.label)}</span>${seatBadge(r.crn)}<span class="crn-copy">copy</span>
         </button>`).join('');
@@ -3292,6 +3320,129 @@ function addFromFinder(i) {
   runFinder();                                          // the timetable changed, so re-check the rest
 }
 
+/* ---------------------------------------------------------------- settings */
+
+const SETTINGS_TOGGLES = [
+  ['showGroup', 'Section group (A, B1…)', true],
+  ['showRoom', 'Room', true],
+  ['showInstructor', 'Instructor', false],
+  ['nowLine', 'Red "now" line on today', true],
+];
+
+function seg(name, options, value) {
+  return `<div class="seg" data-setting="${name}">${options.map(([v, label]) =>
+    `<button type="button" data-value="${v}" aria-pressed="${String(v) === String(value)}">${label}</button>`).join('')}</div>`;
+}
+
+function renderSettings() {
+  const p = store.prefs;
+  const courses = Object.keys(store.tts || {}).reduce((n, term) => n + ((store.tts[term].order || []).length), 0);
+  $('#settings-body').innerHTML = `
+    <section class="set-group">
+      <h3>Appearance</h3>
+      <div class="set-row"><span>Theme</span>${seg('theme', [['auto', 'System'], ['light', 'Light'], ['dark', 'Dark']], p.theme || 'auto')}</div>
+    </section>
+    <section class="set-group">
+      <h3>Timetable</h3>
+      <div class="set-row"><span>Layout</span>${seg('orientation', [['auto', 'Auto'], ['h', 'Rows'], ['v', 'Columns']], p.orientation || 'auto')}</div>
+      <div class="set-row"><span>Time format</span>${seg('clock12', [['false', '24-hour'], ['true', '12-hour']], !!p.clock12)}</div>
+      <div class="set-row set-stack"><span>Show on classes</span>
+        <div class="set-checks">${SETTINGS_TOGGLES.map(([key, label, def]) => `<label><input type="checkbox" data-toggle="${key}"
+          ${(p[key] ?? def) ? 'checked' : ''}> ${esc(label)}</label>`).join('')}</div></div>
+      <div class="set-row"><span>Course colours</span><button type="button" class="btn" id="set-reshuffle">Reshuffle this term</button></div>
+    </section>
+    <section class="set-group">
+      <h3>Your data</h3>
+      <p class="cat-sub">Everything stays in this browser (${courses} course${courses === 1 ? '' : 's'} across your timetables${store.plan ? ', plus your degree plan' : ''}). A backup file moves it to another device or browser.</p>
+      <div class="set-actions">
+        <button type="button" class="btn" id="set-export">Download backup</button>
+        <label class="btn">Restore backup<input type="file" id="set-import" accept="application/json,.json" hidden></label>
+      </div>
+      <div class="set-actions">
+        <button type="button" class="btn quiet danger" id="set-reset-tt">Clear this term's timetable</button>
+        <button type="button" class="btn quiet danger" id="set-reset-plan">Clear degree plan</button>
+        <button type="button" class="btn quiet danger" id="set-reset-all">Reset everything</button>
+      </div>
+    </section>
+    <p class="cat-sub">SUMods · data from Sabancı's public BannerWeb pages · not affiliated with Sabancı University</p>`;
+}
+
+function openSettings() {
+  renderSettings();
+  $('#dlg-settings').showModal();
+}
+
+function applySetting(name, value) {
+  if (name === 'theme') { store.prefs.theme = value; applyTheme(); }
+  else if (name === 'orientation') store.prefs.orientation = value;
+  else if (name === 'clock12') { store.prefs.clock12 = value === 'true'; applyClock(); }
+  save();
+  render();
+  renderSettings();
+}
+
+async function exportBackup() {
+  const text = JSON.stringify({ app: 'sumods', version: 1, exported: new Date().toISOString(), store }, null, 1);
+  const result = await saveFile(`sumods-backup-${new Date().toISOString().slice(0, 10)}.json`, text);
+  toast(result === 'saved' ? 'Backup downloaded' : 'Could not save the backup here');
+}
+
+async function importBackup(file) {
+  try {
+    const data = JSON.parse(await file.text());
+    const incoming = data && data.app === 'sumods' ? data.store : data;
+    if (!incoming || typeof incoming !== 'object' || !incoming.prefs) throw new Error('not a SUMods backup');
+    if (!confirm('Replace your current timetables, plan and settings with this backup?')) return;
+    Object.keys(store).forEach((k) => delete store[k]);
+    Object.assign(store, incoming);
+    save();
+    applyTheme();
+    await setTerm(store.term && App.index.terms.some((t) => t.code === store.term) ? store.term : defaultTermCode(App.index.terms));
+    refreshRequirements();
+    renderSettings();
+    toast('Backup restored');
+  } catch (err) {
+    toast(`That file couldn't be restored — ${err.message || 'unreadable'}`);
+  }
+}
+
+function bindSettings() {
+  $('#settings-btn').addEventListener('click', openSettings);
+  $('#dlg-settings').addEventListener('click', (e) => {
+    const option = e.target.closest('[data-setting] [data-value]');
+    if (option) { applySetting(option.closest('[data-setting]').dataset.setting, option.dataset.value); return; }
+    const id = e.target.id;
+    if (id === 'set-export') exportBackup();
+    if (id === 'set-reshuffle') {
+      pushUndo('colours');
+      tt().order.forEach((code, i) => { tt().courses[code].color = (i * 3 + Math.floor(Math.random() * COLORS)) % COLORS; });
+      save(); render();
+      toast('Colours reshuffled', { action: 'Undo', onAction: undo });
+    }
+    if (id === 'set-reset-tt' && confirm(`Clear every course and event from your ${App.idx.name} timetable?`)) {
+      pushUndo('clear');
+      tt().order = []; tt().courses = {}; tt().custom = [];
+      save(); render(); renderSettings();
+      toast('Timetable cleared', { action: 'Undo', onAction: undo });
+    }
+    if (id === 'set-reset-plan' && confirm('Clear your whole degree plan, including imported grades?')) {
+      store.plan = null; save(); refreshRequirements(); renderSettings(); toast('Plan cleared');
+    }
+    if (id === 'set-reset-all' && confirm('Reset everything — all timetables, your plan and these settings? This can\'t be undone (download a backup first if unsure).')) {
+      try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage blocked */ }
+      location.hash = '';
+      location.reload();
+    }
+  });
+  $('#dlg-settings').addEventListener('change', (e) => {
+    if (e.target.dataset.toggle) {
+      store.prefs[e.target.dataset.toggle] = e.target.checked;
+      save(); render();
+    }
+    if (e.target.id === 'set-import' && e.target.files[0]) importBackup(e.target.files[0]);
+  });
+}
+
 /* --------------------------------------------------------------- chrome */
 
 function toast(message, { action, onAction, timeout = 6000 } = {}) {
@@ -3312,7 +3463,10 @@ function toast(message, { action, onAction, timeout = 6000 } = {}) {
   toast.timer = setTimeout(() => { if (host.firstChild === node) host.innerHTML = ''; }, timeout);
 }
 
+function applyClock() { document.documentElement.classList.toggle('clock12', !!store.prefs.clock12); }
+
 function applyTheme() {
+  applyClock();
   const mode = store.prefs.theme;
   document.documentElement.setAttribute('data-theme', mode === 'auto' ? '' : mode);
   const btn = $('#theme-btn');
@@ -3375,6 +3529,7 @@ async function setTerm(code, { silent = false } = {}) {
   App.calendar = null;
   App.exams = null;
   App.regdays = null;
+  loadApproval().then(() => { if (store.term === code) render(); });
   Promise.all([loadInfo(code), loadInfoAll()]).then(([info]) => {
     if (store.term !== code) return;
     App.info = info;
@@ -3491,6 +3646,7 @@ function bindEvents() {
 
   $('#term-select').addEventListener('change', (e) => setTerm(e.target.value));
 
+  bindSettings();
   $('#theme-btn').addEventListener('click', () => {
     const order = ['auto', 'light', 'dark'];
     store.prefs.theme = order[(order.indexOf(store.prefs.theme) + 1) % order.length];

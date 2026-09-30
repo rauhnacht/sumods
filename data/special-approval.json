@@ -1,0 +1,5 @@
+{
+ "schema": 1,
+ "note": "Courses you register for only with special approval even though they appear on the registration-days list. Any undergraduate course that is NOT on that list is treated as special-approval automatically; add codes here for the ones that are listed but still need it.",
+ "courses": ["DSA 201", "PROJ 201", "ENS 491"]
+}

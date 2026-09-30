@@ -57,6 +57,12 @@ scraper/seats.py     seat availability per CRN
   timetable says which day of registration each course opens for you, with its CRNs, plus the
   critical (`*`) and class-restriction (`!`) marks from the published list. The CRN window
   groups the codes by day so you can work through registration in order.
+- **Settings** (gear, top right) — theme, timetable layout, 24/12-hour times, what class blocks
+  show (section, room, instructor, "now" line), reshuffled colours, and your data: download a
+  backup, restore it in another browser, or clear a term, the plan, or everything.
+- **Special approval** — undergraduate courses missing from the registration-days list, and those
+  named in `data/special-approval.json` (listed but approval-only, e.g. DSA 201, PROJ 201, ENS 491),
+  are marked "special approval" in the registration table and grouped apart in the CRN list.
 - **Course finder** — from the Timetable, lists every course that still fits around what you
   have: as your sections are, or after moving some of them (it names the moves). Filter by
   subject, level, seats left, and by which of your programme's requirements a course counts
