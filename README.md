@@ -316,6 +316,19 @@ headings that name an area, and course codes in the rows after them — whether 
 are table rows, bold text or `<h4>`s. If a real page comes back empty, `--dump` + `--html`
 shows what it saw.
 
+**Double majors.** A programme's double-major requirements are a separate page, `P_PROGRAM=BSCS-DM`
+(for example), and `programs.py` scrapes every programme and its `-DM` variant into
+`data/programs/<CODE>-DM.json`. In the Plan tab you still pick plain "BSCS" as the double major;
+the app reads the `-DM` file for it (and falls back to the normal one if that hasn't been scraped).
+A `-DM` programme that doesn't exist is dropped after three entry terms with no page, so the
+programmes without a double major don't cost a full sweep each.
+
+**Area codes.** Banner spells a programme's electives `<PROGRAM>_CEL` / `_AEL` / `_FEL` (BSCS), with
+`_ARE` / `_FRE` as the older spelling BSEE's links used. The scraper tries the standard one first
+and falls back, remembers which worked for the next entry term, and does not retry a 500 (Banner's
+answer to an area it doesn't know). A double major tries `BSCS-DM_CEL` and then `BSCS_CEL`, always
+with `P_PROGRAM=BSCS-DM`; the log line for each group says which spelling answered.
+
 Core/Area/Free Electives and cross-faculty courses don't list their courses on this page at
 all — only the credit/ECTS floor. Their actual course lists live on a second endpoint, one
 call per area, which `fill_area_courses()` fetches automatically for whichever groups came

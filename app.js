@@ -175,7 +175,8 @@ async function loadOverrides() {
 }
 
 function applyOverrides(entry, code, entryTerm, overrides) {
-  const forProgram = (o) => o.program === '*' || o.program === code || (Array.isArray(o.program) && o.program.includes(code));
+  const base = String(code).replace(/-DM$/, '');
+  const forProgram = (o) => o.program === '*' || o.program === base || (Array.isArray(o.program) && o.program.includes(base));
   const inRange = (o) => !o.entries || ((!o.entries.from || entryTerm >= o.entries.from) && (!o.entries.to || entryTerm <= o.entries.to));
   const relevant = overrides.filter((o) => forProgram(o) && inRange(o));
   if (!relevant.length) return entry;
@@ -1762,7 +1763,7 @@ const activePrograms = () => App.requirements || [];
 async function refreshRequirements() {
   const plan = planState();
   const slots = [['program', 'entry'], ['program2', 'entry2']].filter(([p]) => plan[p]);
-  const results = await Promise.all(slots.map(([p, e]) => loadRequirements(plan[p], plan[e])));
+  const results = await Promise.all(slots.map(([p, e]) => loadRequirements(p === 'program2' ? dmCode(plan[p]) : plan[p], plan[e])));
   slots.forEach(([p, e], i) => {
     const req = results[i];
     if (req && !plan[e] && req.entry !== 'any') plan[e] = req.entry;
@@ -1945,9 +1946,13 @@ function suggestedTermId() {
   return App.index?.terms?.[0]?.code || '202601';
 }
 
+/** The double-major version of a programme's requirements (BSCS-DM), if it has been scraped. */
+const isDM = (code) => /-DM$/.test(code || '');
+const dmCode = (code) => ((App.programs || []).some((p) => p.code === `${code}-DM`) ? `${code}-DM` : code);
+
 function programSelectOptions(selectedCode, excludeCode) {
   return ['<option value="">—</option>'].concat((App.programs || [])
-    .filter((p) => p.code !== excludeCode)
+    .filter((p) => p.code !== excludeCode && !isDM(p.code))
     .map((p) => `<option value="${esc(p.code)}"${p.code === selectedCode ? ' selected' : ''}>${esc(p.name)}${p.legacy ? '' : ` (${esc(p.code)})`}</option>`)).join('');
 }
 
@@ -2107,7 +2112,7 @@ function renderPlanner() {
   const earned = earnedCredits(planned);
 
   const entryOptions1 = entrySelectOptions(plan.program, programs[0] && programs[0].entry);
-  const entryOptions2 = entrySelectOptions(plan.program2, programs[1] && programs[1].entry);
+  const entryOptions2 = entrySelectOptions(plan.program2 && dmCode(plan.program2), programs[1] && programs[1].entry);
 
   const stats = [
     overall ? `<span class="stat">CGPA <b>${overall.gpa.toFixed(2)}</b></span>` : '',
@@ -2117,7 +2122,7 @@ function renderPlanner() {
 
   const reqHTML = programs.length
     ? programs.map((program, i) => `
-        ${programs.length > 1 ? `<h3 class="side-head" style="margin-top:${i ? '18px' : '0'}">${esc(program.name)}${i === 0 ? ' (primary)' : ' (double major)'}</h3>` : ''}
+        ${programs.length > 1 ? `<h3 class="side-head" style="margin-top:${i ? '18px' : '0'}">${esc(program.name.replace(/\s*\(Double Major\)$/i, ''))}${i === 0 ? ' (primary)' : ' (double major)'}</h3>` : ''}
         ${requirementBlockHTML(program, i === 0 ? 'p1' : 'p2')}`).join('')
     : '<p class="empty-note">No programme loaded. Put a curriculum in data/programs.json (tools/import_program.py builds one) to track requirements.</p>';
 
@@ -2420,7 +2425,7 @@ function applyTranscript() {
     }
   }
   // pick the programme(s) and entry term(s) the transcript points to, if nothing is chosen yet
-  const matchProgram = (name) => App.programs && App.programs.find((p) => {
+  const matchProgram = (name) => App.programs && App.programs.filter((p) => !isDM(p.code)).find((p) => {
     const wanted = fold(name);
     return fold(p.name).includes(wanted) || wanted.includes(fold(p.name));
   });

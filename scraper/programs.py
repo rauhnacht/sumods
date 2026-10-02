@@ -12,7 +12,8 @@ Courses, Core Electives, Area Electives, Free Electives… with minimum SU credi
 followed by one course list per area. A course appears only under the first area it
 belongs to, in summary order.
 
-  python scraper/programs.py                              # every programme, fall+spring entries since 2019
+  python scraper/programs.py                              # every programme and its -DM (double major) variant
+  python scraper/programs.py --programs BSCS BSCS-DM      # BSCS as a major, and as a double major
   python scraper/programs.py --programs BSEE BSMAT --entries 202401 202501
   python scraper/programs.py --programs BSEE --entries 202401 --dump bsee.html
   python scraper/programs.py --html bsee.html --programs BSEE --entries 202401 --print
@@ -42,7 +43,12 @@ URL = ("https://suis.sabanciuniv.edu/HbbmWeb/SU_DEGREE.p_degree_detail"
 # for a programme's own electives, or "FC_<school>" + P_FAC for the cross-faculty pool.
 AREA_URL = ("https://suis.sabanciuniv.edu/HbbmWeb/SU_DEGREE.p_list_courses"
             "?P_TERM={term}&P_AREA={area}&P_PROGRAM={program}&P_LANG=EN&P_LEVEL=UG")
-AREA_SUFFIX = {"core": "CEL", "area": "ARE", "free": "FRE"}
+# Banner names an area <PROGRAM>_<suffix>. The standard spelling is CEL / AEL / FEL (BSCS); the first
+# BSEE links we saw used ARE / FRE, so those stay as the fallback. An unknown area code answers
+# with a 500, which is how the wrong spelling announces itself.
+AREA_SUFFIXES = {"core": ["CEL"], "area": ["AEL", "ARE"], "free": ["FEL", "FRE"]}
+AREA_SUFFIX = {kind: names[0] for kind, names in AREA_SUFFIXES.items()}
+WORKING: dict[tuple[str, str], str] = {}      # (programme, kind) -> the area code that answered
 # FC_SOM is what the actual degree-detail page links to for the business school's courses;
 # FC_SBS is tried as a fallback in case a different programme or term uses that code instead.
 FACULTY_AREAS = [("FC_FENS", "E"), ("FC_FASS", "S"), ("FC_SOM", "M"), ("FC_SBS", "M")]
@@ -60,6 +66,44 @@ PROGRAMS = {
     "BAPSY": "Psychology",
     "BAMAN": "Management",
 }
+DM = "-DM"        # P_PROGRAM=BSCS-DM is the double-major version of BSCS's requirements
+
+
+def base_of(code: str) -> str:
+    return code[: -len(DM)] if code.endswith(DM) else code
+
+
+def programme_name(code: str) -> str:
+    name = PROGRAMS.get(base_of(code), code)
+    return f"{name} (Double Major)" if code.endswith(DM) else name
+
+
+def all_programmes() -> list[str]:
+    """Every programme, then its double-major variant — the primary ones first, so a run that
+    runs out of budget has finished the majority of students' programmes."""
+    return list(PROGRAMS) + [code + DM for code in PROGRAMS]
+
+
+def area_candidates(program: str, kind: str) -> list[str]:
+    """Spellings to try for a programme's own electives. A double major tries BSCS-DM_CEL and
+    then BSCS_CEL (always with P_PROGRAM=BSCS-DM); the standard suffix goes before the legacy one."""
+    prefixes = [program] if program == base_of(program) else [program, base_of(program)]
+    return [f"{prefix}_{suffix}" for suffix in AREA_SUFFIXES[kind] for prefix in prefixes]
+
+
+def make_probe_session():
+    """Like make_session, but a 500 is not retried: Banner uses it for "no such area/programme",
+    and retrying those for every wrong spelling would cost minutes per entry term."""
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+
+    session = make_session()
+    retry = Retry(total=2, backoff_factor=1, status_forcelist=(429, 502, 503, 504),
+                  allowed_methods=frozenset(["GET"]))
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    return session
+
+
 CODE_RE = re.compile(r"^\s*([A-Z]{2,6})\s?(\d{3,5}[A-Z]?)\b")
 NUM_RE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*$")
 KINDS = [
@@ -317,46 +361,59 @@ def fetch_area(session, term: str, program: str, area: str, fac: str = "") -> li
 
 def fill_area_courses(session, term: str, program: str, groups: list[dict], delay: float,
                       links: list[dict] | None = None) -> None:
-    """Fill each empty core/area/free/faculty group from its p_list_courses page. The area codes
-    come from the links on the degree page itself when it has them (exact, per programme);
-    only when it doesn't are <PROGRAM>_CEL/_ARE/_FRE and FC_* guessed."""
+    """Fill each empty core/area/free/faculty group from its p_list_courses page. Area codes come
+    from the links on the degree page itself when it has them (exact, per programme); otherwise
+    the known spellings are tried in turn and the one that answers is remembered for the next
+    entry term, so a wrong spelling costs one quick request per programme, not one per term."""
     links = links or []
     for group in groups:
-        if group.get("courses") or group["kind"] not in (*AREA_SUFFIX, "faculty"):
+        kind = group["kind"]
+        if group.get("courses") or kind not in (*AREA_SUFFIX, "faculty"):
             continue
-        found = [l for l in links if l["kind"] == group["kind"]
+        found = [l for l in links if l["kind"] == kind
                  and (not l["label"] or clean(l["label"]).lower().strip(" *:") == clean(group["name"]).lower()
-                      or kind_of(l["label"]) == group["kind"])]
+                      or kind_of(l["label"]) == kind)]
         guessed = not found
         if guessed:
-            if group["kind"] == "faculty":
+            if kind == "faculty":
                 found = [{"area": a, "fac": f} for a, f in FACULTY_AREAS]
             else:
-                found = [{"area": f"{program}_{AREA_SUFFIX[group['kind']]}", "fac": ""}]
+                names = area_candidates(program, kind)
+                known = WORKING.get((program, kind))
+                if known in names:
+                    names.remove(known)
+                    names.insert(0, known)
+                found = [{"area": a, "fac": "", "alt": True} for a in names]
 
         codes: dict[str, None] = {}
         worked = 0
+        used = ""
         faculties_done: set[str] = set()
         for link in found:
             if link["fac"] and link["fac"] in faculties_done:
                 continue          # FC_SOM already answered for P_FAC=M, skip the FC_SBS fallback
+            if link.get("alt") and codes:
+                break             # an earlier spelling already answered
             got = fetch_area(session, term, program, link["area"], link["fac"])
             time.sleep(delay)
             if got is None:
                 continue
+            worked += 1
             if got and link["fac"]:
                 faculties_done.add(link["fac"])
-            worked += 1
+            if got and link.get("alt"):
+                WORKING[(program, kind)] = used = link["area"]
             for c in got:
                 codes.setdefault(c, None)
         group["courses"] = list(codes)
-        source = "guessed codes" if guessed else "codes from the degree page"
-        print(f"    {group['kind']}: {len(codes)} courses from {worked}/{len(found)} list(s), {source}")
+        source = f"guessed {used}" if guessed and used else "guessed codes" if guessed else "codes from the degree page"
+        print(f"    {kind}: {len(codes)} courses from {worked}/{len(found)} list(s), {source}")
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--programs", nargs="*", default=list(PROGRAMS), help="programme codes, e.g. BSEE BSMAT")
+    ap.add_argument("--programs", nargs="*", default=all_programmes(),
+                    help="programme codes, e.g. BSEE BSMAT BSCS-DM (default: all, with double-major variants)")
     ap.add_argument("--entries", nargs="*", help="entry terms (default: fall + spring since 2019)")
     ap.add_argument("--data", default=str(Path(__file__).resolve().parent.parent / "data"))
     ap.add_argument("--delay", type=float, default=1.0)
@@ -407,6 +464,7 @@ def main(argv=None) -> int:
         return 0
 
     session = make_session()
+    probe = make_probe_session()
     deadline = time.monotonic() + args.budget * 60 if args.budget > 0 else float("inf")
     out_dir.mkdir(parents=True, exist_ok=True)
     index = []
@@ -415,12 +473,14 @@ def main(argv=None) -> int:
             break
         path = out_dir / f"{program}.json"
         store = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {
-            "program": program, "name": PROGRAMS.get(program, program), "entries": {}}
+            "program": program, "name": programme_name(program), "entries": {}}
         hashes = {}
         for t, e in store["entries"].items():
             if "sameAs" not in e:
                 hashes.setdefault(digest({k: v for k, v in e.items() if k != "source"}), t)
         recent = set(sorted(entries, reverse=True)[:2])     # this year's cohorts can still change
+        is_dm = program.endswith(DM)
+        misses = 0                                           # consecutive entry terms with no page
         for entry_term in entries:
             if time.monotonic() > deadline:
                 print("  budget reached — saving; the next run continues from here")
@@ -431,10 +491,14 @@ def main(argv=None) -> int:
             url = URL.format(term=entry_term, program=program)
             print(f"{program} {entry_term}")
             try:
-                res = session.get(url, timeout=60)
+                res = (probe if is_dm else session).get(url, timeout=60)
                 res.raise_for_status()
             except Exception as exc:
-                print(f"  failed: {exc}", file=sys.stderr)
+                print(f"  failed: {'no such programme page' if '500' in str(exc) else exc}", file=sys.stderr)
+                misses += 1
+                if is_dm and misses >= 3:
+                    print(f"  {program}: nothing for {misses} entry terms in a row — leaving the older ones")
+                    break
                 continue
             if args.dump:
                 Path(args.dump).write_text(res.text, encoding="utf-8")
@@ -443,9 +507,14 @@ def main(argv=None) -> int:
             parsed = parse_page(res.text)
             if not parsed["groups"]:
                 print("  no requirements on that page (programme not open to that entry term?)")
+                misses += 1
+                if is_dm and misses >= 3:
+                    print(f"  {program}: nothing for {misses} entry terms in a row — leaving the older ones")
+                    break
                 continue
+            misses = 0
             if not args.no_areas:
-                fill_area_courses(session, entry_term, program, parsed["groups"], args.delay,
+                fill_area_courses(probe, entry_term, program, parsed["groups"], args.delay,
                                   parsed.get("links"))
             entry = {"groups": parsed["groups"], "credits": parsed["credits"],
                      "totalCredits": parsed["totalCredits"], "totalEcts": parsed["totalEcts"], "source": url}
@@ -465,8 +534,8 @@ def main(argv=None) -> int:
             continue
         if store["entries"]:
             path.write_text(json.dumps(store, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        index.append({"code": program, "name": store["name"],
-                      "entries": sorted(store["entries"], reverse=True)})
+            index.append({"code": program, "name": store["name"],
+                          "entries": sorted(store["entries"], reverse=True)})
 
     if not args.print and index:
         existing = {}

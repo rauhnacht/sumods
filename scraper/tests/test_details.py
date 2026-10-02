@@ -226,6 +226,113 @@ def test_real_banner_catalog_page():
     assert info["prereqCodes"] == [["EL 202", "EE 202"]] and info["source"] == "bannerweb"
 
 
+class _Resp:
+    status_code = 200
+
+    def __init__(self, text="", code=200):
+        self.text, self.code = text, code
+
+    def raise_for_status(self):
+        if self.code >= 500:
+            raise Exception("500 Server Error")
+
+
+def _list(*codes):
+    return _Resp("<table>" + "".join(f"<tr><td>{c}</td></tr>" for c in codes) + "</table>")
+
+
+def test_area_spellings_and_memory():
+    """BSCS names its areas CEL/AEL/FEL; BSEE's were CEL/ARE/FRE. Both must work, the wrong one
+    must cost one quick request (a 500 is how Banner says "no such area"), and the spelling that
+    worked is tried first for the next entry term."""
+    import programs
+    programs.WORKING.clear()
+    calls = []
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            area = url.split("P_AREA=")[1].split("&")[0]
+            calls.append(area)
+            known = {"BSCS_CEL": ["CS 301"], "BSCS_AEL": ["CS 412", "CS 408"], "BSCS_FEL": ["HUM 207"],
+                     "BSEE_CEL": ["EE 311"], "BSEE_ARE": ["EE 401"], "BSEE_FRE": ["MATH 306"]}
+            return _list(*known[area]) if area in known else _Resp("", 500)
+
+    def groups():
+        return [{"name": "Core Electives", "kind": "core", "courses": []},
+                {"name": "Area Electives", "kind": "area", "courses": []},
+                {"name": "Free Electives", "kind": "free", "courses": []}]
+
+    g = groups()
+    programs.fill_area_courses(S(), "202601", "BSCS", g, 0)
+    assert [x["courses"] for x in g] == [["CS 301"], ["CS 412", "CS 408"], ["HUM 207"]]
+    assert "BSCS_ARE" not in calls and "BSCS_FRE" not in calls          # the standard spelling answered first
+
+    calls.clear()
+    g = groups()
+    programs.fill_area_courses(S(), "202601", "BSEE", g, 0)
+    assert [x["courses"] for x in g] == [["EE 311"], ["EE 401"], ["MATH 306"]]
+    assert calls.count("BSEE_AEL") == 1 and calls.count("BSEE_FEL") == 1   # one failed try each, then the fallback
+
+    calls.clear()
+    programs.fill_area_courses(S(), "202501", "BSEE", groups(), 0)         # next entry term
+    assert "BSEE_AEL" not in calls and "BSEE_FEL" not in calls              # remembered: ARE/FRE go first
+    assert calls == ["BSEE_CEL", "BSEE_ARE", "BSEE_FRE"], calls
+
+
+def test_double_major_programmes():
+    import programs
+    assert "BSCS-DM" in programs.all_programmes() and programs.all_programmes()[:12] == list(programs.PROGRAMS)
+    assert programs.base_of("BSCS-DM") == "BSCS" and programs.base_of("BSCS") == "BSCS"
+    assert programs.programme_name("BSCS-DM") == "Computer Science and Engineering (Double Major)"
+    assert "P_PROGRAM=BSCS-DM&" in programs.URL.format(term="202601", program="BSCS-DM")
+    assert programs.area_candidates("BSCS", "area") == ["BSCS_AEL", "BSCS_ARE"]
+    assert programs.area_candidates("BSCS-DM", "core") == ["BSCS-DM_CEL", "BSCS_CEL"]
+
+    programs.WORKING.clear()
+    urls = []
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            urls.append(url)
+            return _list("CS 301") if "P_AREA=BSCS_CEL" in url else _Resp("", 500)
+
+    g = [{"name": "Core Electives", "kind": "core", "courses": []}]
+    programs.fill_area_courses(S(), "202601", "BSCS-DM", g, 0)
+    assert g[0]["courses"] == ["CS 301"]
+    assert all("P_PROGRAM=BSCS-DM" in u for u in urls), urls              # always asks as the double major
+    assert "P_AREA=BSCS-DM_CEL" in urls[0] and "P_AREA=BSCS_CEL" in urls[1]
+
+
+def test_double_major_that_does_not_exist_is_dropped_quickly():
+    import json
+    import tempfile
+    import programs
+    data = Path(tempfile.mkdtemp())
+    (data / "terms.json").write_text(json.dumps({"terms": [{"code": "202601"}]}))
+    page = (HERE / "fixture_degree.html").read_text(encoding="utf-8")
+    seen = []
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            seen.append(url)
+            if "p_degree_detail" in url:
+                return _Resp(page) if "P_PROGRAM=BSCS&" in url else _Resp("", 500)
+            return _list("CS 301")
+
+    real = (programs.make_session, programs.make_probe_session)
+    programs.make_session = programs.make_probe_session = lambda: S()
+    try:
+        programs.main(["--data", str(data), "--delay", "0", "--programs", "BSCS", "BSCS-DM",
+                       "--entries", "202601", "202501", "202401", "202301", "202201", "202101"])
+    finally:
+        programs.make_session, programs.make_probe_session = real
+    dm_pages = [u for u in seen if "p_degree_detail" in u and "BSCS-DM" in u]
+    assert len(dm_pages) == 3, len(dm_pages)                                # gave up after three misses
+    assert (data / "programs" / "BSCS.json").exists() and not (data / "programs" / "BSCS-DM.json").exists()
+    codes = [p["code"] for p in json.loads((data / "programs" / "index.json").read_text())["programs"]]
+    assert codes == ["BSCS"], codes                                         # no empty "BSCS-DM" in the list
+
+
 def test_kind_of_basic_science_engineering():
     import programs
     assert programs.kind_of("Basic Science Courses") == "basicscience"
