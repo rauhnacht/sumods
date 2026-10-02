@@ -463,6 +463,8 @@ def fill_area_courses(session, term: str, program: str, groups: list[dict], dela
                  and (not l["label"] or clean(l["label"]).lower().strip(" *:") == clean(group["name"]).lower()
                       or kind_of(l["label"]) == kind)]
         guessed = not found
+        if guessed and kind != "faculty" and program.endswith(DM):
+            continue              # a double major's electives are the major's own: borrow_from_major fills them
         if guessed:
             if kind == "faculty":
                 found = [{"area": a, "fac": f} for a, f in FACULTY_AREAS]

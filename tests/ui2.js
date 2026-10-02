@@ -155,7 +155,10 @@ const check = (name, ok, extra = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${nam
   await page.click('#import-apply');
   await page.waitForTimeout(600);
   const termCards = await page.locator('[data-term]').count();
-  check('imported terms land in the plan', termCards === 3, `${termCards} term cards`);
+  const importedIds = await page.evaluate(() => planState().terms.map((t) => t.id).sort());
+  // the three imported terms, plus the current term's card that the timetable's courses created
+  check('imported terms land in the plan', termCards === 4 && ['202401', '202402', '202501'].every((id) => importedIds.includes(id)),
+    `${termCards} term cards: ${importedIds.join(', ')}`);
   const gradeValue = await page.locator('[data-term="202401"] [data-grade="MATH 101"]').inputValue();
   check('grades come across', gradeValue === 'A', gradeValue);
   const stats = await page.locator('#plan-body .filters').textContent();
@@ -163,7 +166,7 @@ const check = (name, ok, extra = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${nam
   await page.selectOption('#new-term', '202502');
   await page.click('#plan-add-term');
   await page.waitForTimeout(300);
-  check('add term appends a semester', (await page.locator('[data-term]').count()) === 4);
+  check('add term appends a semester', (await page.locator('[data-term]').count()) === 5);
   await page.selectOption('[data-term="202401"] [data-grade="MATH 101"]', 'B');
   await page.waitForTimeout(300);
   const stats2 = (await page.locator('#plan-body .filters').textContent()).replace(/\s+/g, ' ');

@@ -8,6 +8,7 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_FULL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const COLORS = 8;
+const MAX_TERM_CREDITS = 20;     // the most SU credits a student may register for in a term
 const DAY_START = 8 * 60 + 40;
 const DAY_END = 19 * 60 + 40;   // always show the evening slots through 19:30
 
@@ -195,29 +196,52 @@ function applyOverrides(entry, code, entryTerm, overrides) {
   return { ...entry, groups, notes: [...(entry.notes || []), ...notes] };
 }
 
+async function programFile(code) {
+  const store = App.programFiles || (App.programFiles = {});
+  if (!store[code]) {
+    const file = window.SUMODS_DATA ? (window.SUMODS_DATA.programFiles || {})[code]
+      : await fetchJSON(`data/programs/${code}.json`).catch(() => null);
+    if (file) store[code] = file;
+  }
+  return store[code] || null;
+}
+
+const resolveEntry = (entries, t) => {
+  let e = entries[t];
+  for (let hop = 0; e && e.sameAs && hop < 20; hop += 1) e = entries[e.sameAs];
+  return e && e.groups ? e : null;
+};
+
+/** A double major's core / area / free electives are exactly its major's: the university publishes
+ * no separate lists for the -DM programme, so those groups take BSMAT's own for the same entry
+ * term (the credit targets still come from the double-major page). */
+async function fillFromMajor(code, term, entry) {
+  if (!isDM(code)) return entry;
+  const file = await programFile(baseCode(code));
+  if (!file) return entry;
+  const entries = file.entries || {};
+  const donor = resolveEntry(entries, term) || resolveEntry(entries, Object.keys(entries).sort().reverse().find((t) => resolveEntry(entries, t)));
+  if (!donor) return entry;
+  const lists = {};
+  donor.groups.forEach((g) => { if ((g.courses || []).length && !lists[g.kind]) lists[g.kind] = g; });
+  return { ...entry, groups: entry.groups.map((g) => (['core', 'area', 'free'].includes(g.kind) && !(g.courses || []).length && lists[g.kind]
+    ? { ...g, courses: lists[g.kind].courses, borrowed: baseCode(code) } : g)) };
+}
+
 async function loadRequirements(code, entryTerm) {
   const listed = (App.programs || []).find((p) => p.code === code);
   if (!listed) return null;
   if (listed.legacy) return { ...listed.legacy, code, entry: 'any' };
-  let file = (App.programFiles || (App.programFiles = {}))[code];
-  if (!file) {
-    file = window.SUMODS_DATA ? (window.SUMODS_DATA.programFiles || {})[code]
-      : await fetchJSON(`data/programs/${code}.json`).catch(() => null);
-    if (!file) return null;
-    App.programFiles[code] = file;
-  }
+  const file = await programFile(code);
+  if (!file) return null;
   const entries = file.entries || {};
-  const resolve = (t) => {
-    let e = entries[t];
-    for (let hop = 0; e && e.sameAs && hop < 20; hop += 1) e = entries[e.sameAs];
-    return e && e.groups ? e : null;
-  };
+  const resolve = (t) => resolveEntry(entries, t);
   // the chosen entry term, else the newest one that actually holds requirements (a half-written
   // or emptied record shouldn't blank the whole programme)
   const wanted = entryTerm && entries[entryTerm] ? entryTerm : null;
   const term = [wanted, ...Object.keys(entries).sort().reverse()].find((t) => t && resolve(t));
   if (!term) return null;
-  const entry = resolve(term);
+  const entry = await fillFromMajor(code, term, resolve(term));
   const overrides = await loadOverrides();
   const patched = applyOverrides(entry, code, term, overrides);
   return { code, name: file.name, entry: term, ...patched };
@@ -365,15 +389,22 @@ const fmtDate = (iso) => {
 /** [[ 'MATH 201', 'MATH 204' ], [ 'CS 201' ]] — groups are required, codes inside are alternatives. */
 function requirementGroups(code, key = 'prereqCodes') {
   const info = courseInfo(code);
-  return (info && info[key]) || [];
+  const own = String(code).replace(/\s+/g, '');
+  const isOwn = (c) => {
+    const x = String(c).replace(/\s+/g, '');
+    return x === own || (x.startsWith(own) && /^[A-Z]$/.test(x.slice(own.length)));
+  };
+  return ((info && info[key]) || []).map((group) => group.filter((c) => !isOwn(c))).filter((group) => group.length);
 }
 
 /** Courses in this term whose prerequisites name `code`. */
 function unlockedBy(code) {
+  // Every course on record, not only the ones offered this term: a Spring-only course such as EE 202
+  // is still opened by ENS 203 while the Fall timetable is on screen.
   const pool = new Set([...Object.keys((App.info && App.info.courses) || {}), ...Object.keys((App.infoAll && App.infoAll.courses) || {})]);
   const out = [];
   for (const other of pool) {
-    if (other === code || !App.idx.byCode.has(other)) continue;
+    if (other === code) continue;
     if ((requirementGroups(other) || []).some((group) => group.includes(code))) out.push(other);
   }
   return out.sort((a, b) => naturalKey(a).localeCompare(naturalKey(b)));
@@ -405,7 +436,7 @@ function prereqHTML(code) {
     ${coreq.length ? `<h3>Alongside</h3><ul class="req-list">${coreq.map((g) => g.map((c) =>
       `<li><button type="button" class="req" data-course="${esc(c)}">${esc(c)}</button></li>`).join('')).join('')}</ul>` : ''}
     ${unlocks.length ? `<h3>Opens up</h3><p class="req-opens">${unlocks.map((c) =>
-      `<button type="button" class="req" data-course="${esc(c)}">${esc(c)}</button>`).join(' ')}</p>` : ''}
+      `<button type="button" class="req${App.idx.byCode.has(c) ? '' : ' req-off'}" data-course="${esc(c)}"${App.idx.byCode.has(c) ? '' : ` title="Not offered in ${esc(App.idx.name)}"`}>${esc(c)}</button>`).join(' ')}</p>` : ''}
   </div>`;
 }
 
@@ -634,7 +665,9 @@ function pushUndo(label) {
 function undo() {
   const last = App.undo.pop();
   if (!last) return;
+  const syncedBefore = { ...(tt().synced || {}) };
   store.tts[store.term] = JSON.parse(last.snapshot);
+  tt().synced = syncedBefore;       // so the plan sees exactly what the undo added or removed
   App.swap = null;
   save();
   render();
@@ -833,7 +866,7 @@ function blockBody(b, size) {
   const group = p.showGroup !== false && b.group && b.group !== '0' ? `<span class="b-grp">${esc(b.group)}</span>` : '';
   const where = p.showRoom !== false && b.where ? `<span class="b-where">${esc(b.where)}</span>` : '';
   const people = b.sec && b.sec.people ? b.sec.people : [];
-  const who = p.showInstructor && people.length ? `<span class="b-where">${esc(people[0].split(' ').slice(-1)[0])}</span>` : '';
+  const who = p.showInstructor && people.length ? `<span class="b-where">${esc(people[0])}</span>` : '';
   const label = `${b.code} ${b.group}, ${DAYS_FULL[b.day]} ${hhmm(b.start)} to ${hhmm(b.end)}${b.where ? `, ${b.where}` : ''}`;
   return { cls, inner: `<span class="b-code">${esc(b.code)}</span>${group}${where}${who}`, label };
 }
@@ -1043,10 +1076,33 @@ const PROGRAM_SUBJECT = {
 /** The registration-days programme picker defaults to whatever's chosen in the Plan tab
  * (mapped to BannerWeb's short department codes) so the two don't drift apart; an explicit
  * pick in the registration panel itself overrides that default. */
-function myPrograms() {
-  if (store.prefs.programs && store.prefs.programs.length) return store.prefs.programs.filter(Boolean);
+function myProgramPair() {
   const plan = planState();
-  return [PROGRAM_SUBJECT[plan.program], PROGRAM_SUBJECT[plan.program2]].filter(Boolean);
+  return [plan.program ? subjectOf(plan.program) : plan.regPrimary, plan.program2 ? subjectOf(plan.program2) : plan.regSecond];
+}
+
+const myPrograms = () => myProgramPair().filter(Boolean);
+
+/** Picking in the registration panel writes to the Plan (and the Plan's picks show here), so the two
+ * never drift apart. A department with no programme file yet (or "Undeclared") is kept as a
+ * registration-only choice. The double major can't be "Undeclared" nor the same as the main one. */
+function applyRegPrograms(first, second) {
+  const plan = planState();
+  if (first && first === second) second = '';
+  if (second === 'Undeclared') second = '';
+  const known = (code) => code && (App.programs || []).some((p) => p.code === code);
+  const p1 = first ? programForSubject(first) : null;
+  const p2 = second ? programForSubject(second) : null;
+  const before = [plan.program, plan.program2];
+  plan.program = known(p1) ? p1 : null;
+  plan.regPrimary = plan.program ? null : (first || null);
+  plan.program2 = known(p2 && `${p2}-DM`) ? `${p2}-DM` : null;
+  plan.regSecond = plan.program2 ? null : (second || null);
+  if (plan.program !== before[0]) plan.entry = plan.terms[0] ? plan.terms[0].id : null;
+  if (plan.program2 !== before[1]) plan.entry2 = plan.terms[0] ? plan.terms[0].id : null;
+  save();
+  refreshRequirements();
+  render();
 }
 
 /**
@@ -1098,9 +1154,10 @@ function renderRegDays() {
   if (!host) return;
   if (!App.regdays) { host.innerHTML = ''; return; }
 
-  const options = (extra) => ['<option value="">—</option>'].concat(App.regdays.programs.map((p) =>
-    `<option value="${esc(p)}"${p === extra ? ' selected' : ''}>${esc(p)}</option>`)).join('');
-  const [first, second] = myPrograms();
+  const [first, second] = myProgramPair();
+  const options = (selected, skip = []) => ['<option value="">—</option>'].concat(App.regdays.programs
+    .filter((p) => !skip.includes(p)).map((p) =>
+      `<option value="${esc(p)}"${p === selected ? ' selected' : ''}>${esc(p)}</option>`)).join('');
 
   const rows = [];
   for (const code of tt().order) {
@@ -1124,9 +1181,9 @@ function renderRegDays() {
     <div class="reg-head">
       <h3 class="side-head">Registration days</h3>
       <label class="reg-pick">Programme
-        <select class="select" id="reg-program">${options(first)}</select></label>
+        <select class="select" id="reg-program">${options(first, [second])}</select></label>
       <label class="reg-pick">Double major
-        <select class="select" id="reg-major2">${options(second)}</select></label>
+        <select class="select" id="reg-major2">${options(second, [first, 'Undeclared'])}</select></label>
     </div>
     ${myPrograms().length ? `
       <table class="reg-table">
@@ -1181,7 +1238,9 @@ function renderSummary(pairs) {
   const stats = [`<span class="stat"><b>${codes.length}</b> course${codes.length === 1 ? '' : 's'}</span>`];
   if (codes.length && credits.every((c) => c !== null)) {
     const total = credits.reduce((a, b) => a + b, 0);
-    stats.push(`<span class="stat"><b>${total}</b> SU credits</span>`);
+    stats.push(total > MAX_TERM_CREDITS
+      ? `<span class="stat over" title="More than the ${MAX_TERM_CREDITS} SU credits allowed in a term"><b>${total}</b> SU credits</span>`
+      : `<span class="stat"><b>${total}</b> SU credits</span>`);
   }
   const ects = codes.map((c) => (courseInfo(c) || {}).ects);
   if (codes.length && ects.every((v) => typeof v === 'number')) {
@@ -1217,7 +1276,7 @@ function sectionOptionLabel(sec) {
   const when = sec.meetings.length
     ? sec.meetings.map((m) => `${DAYS[m.day]} ${hhmm(m.start)}`).join(', ')
     : 'no fixed time';
-  const who = sec.people[0] ? `, ${sec.people[0].split(' ').slice(-1)[0]}` : '';
+  const who = sec.people[0] ? `, ${sec.people[0]}` : '';
   const seats = seatInfo(sec.crn);
   const left = seats ? (seats.remaining <= 0 ? ' — full' : ` — ${seats.remaining} left`) : '';
   return `${sec.group}: ${when}${who} (${sec.crn})${left}`;
@@ -1319,7 +1378,7 @@ function linkMismatch(course, e) {
 function mainInstructors(course, e) {
   const sec = App.idx.byCrn.get(e.sel['']) || App.idx.byCrn.get(Object.values(e.sel)[0]);
   if (!sec || !sec.people.length) return '';
-  return sec.people.slice(0, 3).join(', ') + (sec.people.length > 3 ? ` +${sec.people.length - 3}` : '');
+  return sec.people[0];            // the primary instructor; the rest are assistants
 }
 
 function icon(name) {
@@ -1482,7 +1541,7 @@ function courseDetailHTML(course, { heading = false } = {}) {
         <td>${esc(s.group)}</td>
         <td>${s.meetings.length ? s.meetings.map((m) => `${DAYS[m.day]} ${hhmm(m.start)}–${hhmm(m.end)}`).join('<br>') : '<span class="muted">TBA</span>'}</td>
         <td class="muted">${s.meetings.map((m) => esc(m.place)).filter(Boolean).join('<br>') || '—'}</td>
-        <td class="muted">${esc(s.people.join(', ')) || '—'}</td>
+        <td class="muted">${s.people.length ? `<span title="${esc(s.people.join(', '))}">${esc(s.people[0])}</span>` : '—'}</td>
         <td><a href="${esc(bannerURL(s.crn))}" target="_blank" rel="noopener">${esc(s.crn)}</a></td>
         ${App.seats || LIVE_SEATS ? `<td>${seatBadge(s.crn) || '<span class="muted">—</span>'}</td>` : ''}
         <td><a href="${esc(syllabusURL(course, comp, s.group))}" target="_blank" rel="noopener">syllabus</a></td>
@@ -1553,8 +1612,10 @@ function prereqGraphSVG(code) {
     }));
     edges.push([node.code, code]);
   });
-  opens.forEach((c) => edges.push([code, c]));
-  const columns = [back2, back1, [{ code, center: true }], opens.map((c) => ({ code: c }))].filter((col) => col.length);
+  const GRAPH_MAX = 12;
+  const shownOpens = opens.slice(0, GRAPH_MAX);
+  shownOpens.forEach((c) => edges.push([code, c]));
+  const columns = [back2, back1, [{ code, center: true }], shownOpens.map((c) => ({ code: c }))].filter((col) => col.length);
   const colW = 126, rowH = 34, nodeW = 96, nodeH = 26, pad = 12;
   const height = Math.max(...columns.map((c) => c.length)) * rowH + pad * 2;
   const width = columns.length * colW;
@@ -1574,7 +1635,8 @@ function prereqGraphSVG(code) {
   }).join('');
   const nodes = [...pos.values()].map(({ x, y, node }) => {
     const known = App.idx.byCode.has(node.code) || (App.union && App.union.has(node.code));
-    return `<g class="pg-node${node.center ? ' center' : ''}${known ? '' : ' off'}${node.alt ? ' alt' : ''}" data-course="${esc(node.code)}" tabindex="0" role="button">
+    const offered = App.idx.byCode.has(node.code);
+    return `<g class="pg-node${node.center ? ' center' : ''}${known ? '' : ' off'}${known && !offered ? ' offterm' : ''}${node.alt ? ' alt' : ''}" data-course="${esc(node.code)}" tabindex="0" role="button">
       <rect x="${x}" y="${y}" width="${nodeW}" height="${nodeH}" rx="8"/>
       <text x="${x + nodeW / 2}" y="${y + nodeH / 2 + 4}" text-anchor="middle">${esc(node.code)}</text></g>`;
   }).join('');
@@ -1582,20 +1644,34 @@ function prereqGraphSVG(code) {
   return `<div class="pg-wrap"><svg class="pg" viewBox="0 0 ${width} ${height + 18}" style="max-width:${width}px" role="img" aria-label="Prerequisites of ${esc(code)}">
     ${heads.map((h, i) => `<text x="${i * colW + colW / 2}" y="12" text-anchor="middle" class="pg-head">${h}</text>`).join('')}
     <g transform="translate(0,18)">${paths}${nodes}</g></svg>
-    ${back1.some((n) => n.alt) ? '<p class="cat-sub">Outlined boxes are alternatives — one of them is enough.</p>' : ''}</div>`;
+    ${back1.some((n) => n.alt) ? '<p class="cat-sub">Outlined boxes are alternatives — one of them is enough.</p>' : ''}
+    ${opens.length > GRAPH_MAX ? `<h3 class="side-head">All ${opens.length} courses it opens</h3><p class="req-opens">${opens.map((c) =>
+      `<button type="button" class="req${App.idx.byCode.has(c) ? '' : ' req-off'}" data-course="${esc(c)}">${esc(c)}</button>`).join(' ')}</p>` : ''}</div>`;
+}
+
+/** A course known from the catalog (offered in some other term) but not in this term's schedule. */
+function catalogCourse(code) {
+  const u = App.union && App.union.get(code);
+  if (!u) return null;
+  const [subj, num] = code.split(' ');
+  return { code, subj, num, title: u.title || '', credits: u.credits ?? null, level: levelOf(num),
+    components: [], lecture: null, offTerm: true };
 }
 
 function openCourseDialog(code, { keepPolling = false } = {}) {
-  const course = App.idx.byCode.get(code);
+  let course = App.idx.byCode.get(code);
+  if (!course && !App.union) { ensureUnion().then(() => openCourseDialog(code)); return; }
+  if (!course) course = catalogCourse(code);
   if (!course) return;
   if (!App.union) ensureUnion().then(() => { if ($('#dlg-course').open) openCourseDialog(code, { keepPolling: true }); });
   const added = !!entry(code);
   $('#course-dlg-title').textContent = `${course.code} ${course.title}`;
-  $('#course-body').innerHTML = courseDetailHTML(course);
-  $('#course-add').textContent = added ? 'Remove from timetable' : 'Add to timetable';
+  $('#course-body').innerHTML = (course.offTerm ? `<p class="course-note muted">Not offered in ${esc(App.idx.name)} — this is its catalog entry.</p>` : '') + courseDetailHTML(course);
+  $('#course-add').textContent = course.offTerm ? `Not offered in ${App.idx.name}` : added ? 'Remove from timetable' : 'Add to timetable';
+  $('#course-add').disabled = !!course.offTerm;
   $('#course-add').dataset.code = code;
   if (!$('#dlg-course').open) $('#dlg-course').showModal();
-  if (LIVE_SEATS && !keepPolling) startSeatsPolling(code, course);
+  if (LIVE_SEATS && !keepPolling && !course.offTerm) startSeatsPolling(code, course);
 }
 
 /* ------------------------------------------------------------- degree plan */
@@ -1769,8 +1845,20 @@ const activePrograms = () => App.requirements || [];
 
 async function refreshRequirements() {
   const plan = planState();
+  if (store.prefs.programs && store.prefs.programs.length) {   // the registration panel's own old pick
+    const [f, s] = store.prefs.programs;
+    delete store.prefs.programs;
+    if (!plan.program && !plan.program2 && !plan.regPrimary && !plan.regSecond) { plan.regPrimary = f || null; plan.regSecond = s || null; }
+    save();
+  }
+  if (plan.program2 && !isDM(plan.program2)) {                // an older plan stored BSMAT; the double major is BSMAT-DM
+    plan.program2 = dmCode(plan.program2);
+    plan.entry2 = null;
+    save();
+  }
+  if (plan.program2 && baseCode(plan.program2) === baseCode(plan.program)) { plan.program2 = null; save(); }
   const slots = [['program', 'entry'], ['program2', 'entry2']].filter(([p]) => plan[p]);
-  const results = await Promise.all(slots.map(([p, e]) => loadRequirements(p === 'program2' ? dmCode(plan[p]) : plan[p], plan[e])));
+  const results = await Promise.all(slots.map(([p, e]) => loadRequirements(plan[p], plan[e])));
   slots.forEach(([p, e], i) => {
     const req = results[i];
     if (req && !plan[e] && req.entry !== 'any') plan[e] = req.entry;
@@ -1955,11 +2043,16 @@ function suggestedTermId() {
 
 /** The double-major version of a programme's requirements (BSCS-DM), if it has been scraped. */
 const isDM = (code) => /-DM$/.test(code || '');
-const dmCode = (code) => ((App.programs || []).some((p) => p.code === `${code}-DM`) ? `${code}-DM` : code);
+const baseCode = (code) => String(code || '').replace(/-DM$/, '');
+const dmCode = (code) => ((App.programs || []).some((p) => p.code === `${baseCode(code)}-DM`) ? `${baseCode(code)}-DM` : null);
+const subjectOf = (code) => PROGRAM_SUBJECT[baseCode(code)];
+const programForSubject = (subject) => Object.keys(PROGRAM_SUBJECT).find((k) => PROGRAM_SUBJECT[k] === subject);
 
-function programSelectOptions(selectedCode, excludeCode) {
+/** `double`: list only the double-major (-DM) programmes, never the one that matches the main
+ * programme. Otherwise list the normal programmes, never the one picked as the double major. */
+function programSelectOptions(selectedCode, excludeCode, double = false) {
   return ['<option value="">—</option>'].concat((App.programs || [])
-    .filter((p) => p.code !== excludeCode && !isDM(p.code))
+    .filter((p) => (double ? isDM(p.code) : !isDM(p.code)) && baseCode(p.code) !== baseCode(excludeCode))
     .map((p) => `<option value="${esc(p.code)}"${p.code === selectedCode ? ' selected' : ''}>${esc(p.name)}${p.legacy ? '' : ` (${esc(p.code)})`}</option>`)).join('');
 }
 
@@ -2140,7 +2233,7 @@ function renderPlanner() {
         <select class="select" id="plan-program" aria-label="Programme">${programSelectOptions(plan.program, plan.program2)}</select></label>
       ${entryOptions1 ? `<select class="select" id="plan-entry" aria-label="Entry term">${entryOptions1}</select>` : ''}
       <label class="reg-pick">Double major
-        <select class="select" id="plan-program2" aria-label="Double major">${programSelectOptions(plan.program2, plan.program)}</select></label>
+        <select class="select" id="plan-program2" aria-label="Double major">${programSelectOptions(plan.program2, plan.program, true)}</select></label>
       ${entryOptions2 ? `<select class="select" id="plan-entry2" aria-label="Second entry term">${entryOptions2}</select>` : ''}
       ${(() => {
         const standing = classStanding();
@@ -2443,7 +2536,8 @@ function applyTranscript() {
   }
   if (parsed.program2 && !plan.program2) {
     const match2 = matchProgram(parsed.program2);
-    if (match2 && match2.code !== plan.program) { plan.program2 = match2.code; plan.entry2 = parsed.terms[0] ? parsed.terms[0].id : null; }
+    const dm = match2 && match2.code !== plan.program ? dmCode(match2.code) : null;
+    if (dm) { plan.program2 = dm; plan.entry2 = parsed.terms[0] ? parsed.terms[0].id : null; }
   }
   save();
   refreshRequirements();
@@ -3590,8 +3684,44 @@ function showDataError(err) {
     <p class="cat-sub">${esc(err && err.message ? err.message : String(err))}</p></div>`;
 }
 
+/** The timetable feeds the Plan: a course put in this term's timetable is planned for this term too. It is
+ * added once (so deleting it from the Plan sticks while it stays in the timetable) and taken out again
+ * only if the timetable drops it and no grade has been entered. Courses planned or taken in another
+ * term are left where they are. */
+function syncPlanFromTimetable() {
+  if (!App.idx || App.preview) return;
+  const t = tt();
+  const synced = t.synced || (t.synced = {});
+  const inTimetable = new Set(t.order.filter((code) => App.idx.byCode.has(code)));
+  const plan = planState();
+  const termId = store.term;
+  let changed = false;
+  for (const code of inTimetable) {
+    if (synced[code]) continue;
+    synced[code] = true;
+    changed = true;
+    if (plan.terms.some((pt) => pt.courses.some((c) => c.code === code))) continue;
+    let planned = plan.terms.find((pt) => pt.id === termId);
+    if (!planned) {
+      planned = { id: termId, courses: [] };
+      plan.terms.push(planned);
+      plan.terms.sort((a, b) => a.id.localeCompare(b.id));
+    }
+    planned.courses.push({ code, src: 'tt' });
+  }
+  for (const code of Object.keys(synced)) {
+    if (inTimetable.has(code)) continue;
+    delete synced[code];
+    changed = true;
+    const planned = plan.terms.find((pt) => pt.id === termId);
+    if (planned) planned.courses = planned.courses.filter((c) => !(c.code === code && c.src === 'tt' && !c.grade));
+  }
+  if (changed) save();
+}
+
 function render() {
   if (!App.idx) return;
+  syncPlanFromTimetable();
   $('#term-note').textContent = `Updated ${new Date(App.idx.updated).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
   $('#source-note').textContent = App.idx.source || '';
   $('#preview-banner').hidden = !App.preview;
@@ -3881,8 +4011,8 @@ function bindEvents() {
       return;
     }
     const req = e.target.closest('.req, .pg-node');
-    if (req && App.idx.byCode.has(req.dataset.course)) { openCourseDialog(req.dataset.course); return; }
-    if (req && req.classList.contains('pg-node')) { toast(`${req.dataset.course} isn't offered in ${App.idx.name}`); return; }
+    if (req && (App.idx.byCode.has(req.dataset.course) || (App.union && App.union.has(req.dataset.course)) || courseInfo(req.dataset.course))) { openCourseDialog(req.dataset.course); return; }
+    if (req && req.classList.contains('pg-node')) { toast(`${req.dataset.course} isn't in the catalog`); return; }
     if (e.target.id === 'course-add') {
       const code = e.target.dataset.code;
       if (entry(code)) removeCourse(code); else addCourse(code);
@@ -3914,11 +4044,7 @@ function bindEvents() {
 
   $('#regdays').addEventListener('change', (e) => {
     if (e.target.id !== 'reg-program' && e.target.id !== 'reg-major2') return;
-    const first = $('#reg-program').value;
-    const second = $('#reg-major2').value;
-    store.prefs.programs = [first, second].filter(Boolean);
-    save();
-    render();
+    applyRegPrograms($('#reg-program').value, $('#reg-major2').value);
   });
   $('#regdays').addEventListener('click', async (e) => {
     const chip = e.target.closest('[data-crn]');
@@ -3997,15 +4123,23 @@ function bindEvents() {
     if (e.target.id === 'plan-program') {
       planState().program = e.target.value || null;
       planState().entry = planState().terms[0] ? planState().terms[0].id : null;
+      planState().regPrimary = null;
+      if (planState().program2 && baseCode(planState().program2) === baseCode(planState().program)) {
+        planState().program2 = null;                          // BSEE as the main programme rules out BSEE-DM
+        planState().entry2 = null;
+      }
       save();
       refreshRequirements();
+      render();
     }
     if (e.target.id === 'plan-entry') { planState().entry = e.target.value; save(); refreshRequirements(); }
     if (e.target.id === 'plan-program2') {
       planState().program2 = e.target.value || null;
       planState().entry2 = planState().terms[0] ? planState().terms[0].id : null;
+      planState().regSecond = null;
       save();
       refreshRequirements();
+      render();
     }
     if (e.target.id === 'plan-entry2') { planState().entry2 = e.target.value; save(); refreshRequirements(); }
     if (e.target.id === 'plan-standing') { planState().manualStanding = e.target.value || null; save(); renderPlanner(); }

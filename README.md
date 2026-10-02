@@ -63,6 +63,10 @@ scraper/seats.py     seat availability per CRN
 - **Special approval** — undergraduate courses missing from the registration-days list, and those
   named in `data/special-approval.json` (listed but approval-only, e.g. DSA 201, PROJ 201, ENS 491),
   are marked "special approval" in the registration table and grouped apart in the CRN list.
+- **Instructors** — shown by full name, and only the primary instructor ("(P)" in BannerWeb; the
+  scraper sorts that one first) when a section has several. SU credits turn red above 20, the per-term maximum.
+- **Prerequisites** — every course a course opens is listed (also those not offered this term, dimmed, with
+  their catalog entry one tap away); a course is never treated as its own prerequisite (SPS 303 vs SPS 303D).
 - **Course finder** — from the Timetable, lists every course that still fits around what you
   have: as your sections are, or after moving some of them (it names the moves). Filter by
   subject, level, seats left, and by which of your programme's requirements a course counts
@@ -339,11 +343,18 @@ course rows each returns. It writes nothing, and works for any programme code, m
 `update-seats` finish (a push to `main` goes through `update-data`), so freshly scraped programmes
 reach the host without a manual deploy. A seats run that left the repo untouched is skipped.
 
-**Double-major lists.** The `-DM` pages publish their credit targets but, as far as the scraper
-can find, no lists of their own (`BSCS-DM_CEL` answers 500; `BSCS_CEL` asked as `BSCS-DM` answers with
-no rows). Those groups take the main programme's list for the same entry term and carry a
-`borrowed` marker, which the requirements popup spells out. If the page does turn out to link its
-own lists, `--probe --programs BSCS-DM` shows them and the scraper will prefer them.
+**Plan, timetable and registration days.** The Plan is the one place programmes live: the registration-days
+panel reads its programmes from there and writes back to it, so the two never disagree. The double-major picker
+lists only `-DM` programmes (never the one matching the main programme, and the main picker never offers the
+double major's), and "Undeclared" is a main-programme choice only. A course put in a term's timetable is
+planned for that term too; it leaves the plan again when the timetable drops it, unless a grade was entered.
+Deleting it from the plan sticks while it stays in the timetable.
+
+**Double-major lists.** A double major's core, area and free electives are exactly its major's: BSMAT-DM uses
+BSMAT's lists, taken for the same entry term, while the credit targets still come from the `-DM` page. The
+scraper no longer asks the server for them (it copies from the major's file, marking each group `borrowed`) and
+the app does the same at load time, so it works even before the scraper has run again. The requirements popup
+says when a list is the major's. Only the faculty lists are still requested for a `-DM` programme.
 
 **Re-runs are safe.** The two newest entry terms are re-fetched on every run; an entry that comes
 back unchanged stays a full record, and when one changes, older cohorts that were sharing its old

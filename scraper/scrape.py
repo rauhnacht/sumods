@@ -130,10 +130,26 @@ def short_place(text: str) -> str:
     return clean(t)
 
 
+PRIMARY = re.compile(r"\(\s*P\s*\)")
+
+
+def split_instructors(text: str) -> tuple[list[str], list[str]]:
+    """(all names, the ones marked "(P)" — the primary instructor), markers removed."""
+    names, primary = [], []
+    for raw in (text or "").split(","):
+        name = clean(PRIMARY.sub("", raw))
+        if not name or name.upper() == "TBA":
+            continue
+        names.append(name)
+        if PRIMARY.search(raw):
+            primary.append(name)
+    return names, primary
+
+
 def parse_instructors(text: str) -> list[str]:
-    t = re.sub(r"\(\s*P\s*\)", "", text or "")
-    names = [clean(n) for n in t.split(",")]
-    return [n for n in names if n and n.upper() != "TBA"]
+    """Names with the primary instructor first, so the first name is always the one to show."""
+    names, primary = split_instructors(text)
+    return [n for n in names if n in primary] + [n for n in names if n not in primary]
 
 
 def natural_key(s: str):
@@ -178,6 +194,7 @@ def parse_section(m: re.Match, body) -> dict:
                 columns[clean(cell.get_text(" ")).lower()] = i
         col = lambda name, default: columns.get(name, default)  # noqa: E731
         instructors: list[str] = []
+        primaries: list[str] = []
         for row in table.find_all("tr"):
             cells = row.find_all("td")
             if not cells:
@@ -192,15 +209,19 @@ def parse_section(m: re.Match, body) -> dict:
             start, end = parse_time_range(cell("time", 1))
             days = parse_days(cell("days", 2))
             place = short_place(cell("where", 3))
-            for name in parse_instructors(cell("instructors", 6, raw=True)):
+            names, marked = split_instructors(cell("instructors", 6, raw=True))
+            for name in names:
                 if name not in instructors:
                     instructors.append(name)
+            primaries.extend(n for n in marked if n not in primaries)
             if start is None or end is None or not days:
                 meetings.append({"days": [], "start": None, "end": None, "place": place})
             else:
                 meetings.append({"days": days, "start": start, "end": end, "place": place})
     else:
         instructors = []
+        primaries = []
+    instructors = [n for n in instructors if n in primaries] + [n for n in instructors if n not in primaries]
 
     return {
         "title": clean(m.group("title")),

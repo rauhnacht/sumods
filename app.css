@@ -698,3 +698,11 @@ footer a { color: inherit; }
 /* 12-hour labels ("12:40 pm") need a wider time gutter than "12:40" */
 .clock12 .tt { --label-w: 62px; }
 .tt-vaxis span, .tt-tick { white-space: nowrap; }
+
+/* credits above the per-term maximum */
+.stat.over { background: var(--clash-soft); color: var(--clash); box-shadow: inset 0 0 0 1px var(--clash); }
+.stat.over b { color: var(--clash); }
+
+/* in the catalog but not in this term's schedule */
+.pg-node.offterm rect { opacity: .55; stroke-dasharray: 3 2; }
+.pg-node.offterm text { opacity: .7; }

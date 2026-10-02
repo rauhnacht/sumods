@@ -296,13 +296,13 @@ def test_double_major_programmes():
     class S:
         def get(self, url, timeout=None, headers=None):
             urls.append(url)
-            return _list("CS 301") if "P_AREA=BSCS_CEL" in url else _Resp("", 500)
+            return _list("CS 301")
 
-    g = [{"name": "Core Electives", "kind": "core", "courses": []}]
+    g = [{"name": "Core Electives", "kind": "core", "courses": []},
+         {"name": "Faculty Courses", "kind": "faculty", "courses": []}]
     programs.fill_area_courses(S(), "202601", "BSCS-DM", g, 0)
-    assert g[0]["courses"] == ["CS 301"]
-    assert all("P_PROGRAM=BSCS-DM" in u for u in urls), urls              # always asks as the double major
-    assert "P_AREA=BSCS-DM_CEL" in urls[0] and "P_AREA=BSCS_CEL" in urls[1]
+    assert g[0]["courses"] == [], g                                          # left for borrow_from_major, no request made
+    assert urls and all("P_AREA=FC_" in u and "P_PROGRAM=BSCS-DM" in u for u in urls), urls   # faculty lists still asked
 
 
 def test_double_major_that_does_not_exist_is_dropped_quickly():
@@ -417,17 +417,18 @@ def test_unknown_area_names_are_asked_once_per_run():
     class S:
         def get(self, url, timeout=None, headers=None):
             asked.append(url.split("P_AREA=")[1].split("&")[0])
-            return _Resp("", 500) if "BSCS-DM_" in url else _Resp("<table></table>")   # DM names unknown, base names answer empty
+            return _Resp("", 500) if "BSEE_AEL" in url else _Resp("<table></table>")   # AEL unknown, the rest answer empty
 
     def groups():
         return [{"name": "Core Electives", "kind": "core", "courses": []}]
 
-    programs.fill_area_courses(S(), "202601", "BSCS-DM", groups(), 0)
+    area_group = lambda: [{"name": "Area Electives", "kind": "area", "courses": []}]
+    programs.fill_area_courses(S(), "202601", "BSEE", area_group(), 0)
     first = list(asked)
     asked.clear()
-    programs.fill_area_courses(S(), "202501", "BSCS-DM", groups(), 0)
-    assert first == ["BSCS-DM_CEL", "BSCS_CEL"], first
-    assert asked == [], asked              # neither the unknown name nor the empty answer is asked again
+    programs.fill_area_courses(S(), "202501", "BSEE", area_group(), 0)
+    assert first == ["BSEE_AEL", "BSEE_ARE"], first
+    assert "BSEE_AEL" not in asked, asked  # the name the server doesn't know isn't asked again
 
 
 def test_double_major_borrows_the_majors_lists():
@@ -513,6 +514,14 @@ def test_rerunning_never_wipes_stored_entries():
         assert all(e.get("sameAs") != t for t, e in third.items())                           # nothing points at itself
     finally:
         programs.make_session, programs.make_probe_session, programs.time.sleep = real
+
+
+def test_primary_instructor_comes_first():
+    import scrape
+    assert scrape.parse_instructors("Ali Veli, Saima Gül (P), Ayşe Kaya") == ["Saima Gül", "Ali Veli", "Ayşe Kaya"]
+    assert scrape.parse_instructors("Saima Gül") == ["Saima Gül"] and scrape.parse_instructors("TBA") == []
+    names, marked = scrape.split_instructors("Ali Veli (P), Saima Gül")
+    assert names == ["Ali Veli", "Saima Gül"] and marked == ["Ali Veli"]
 
 
 def test_kind_of_basic_science_engineering():
