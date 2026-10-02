@@ -6,7 +6,7 @@ name: Deploy to GitHub Pages
 on:
   workflow_dispatch:
   workflow_run:
-    workflows: ["Update course data"]
+    workflows: ["Update course data", "Update course descriptions", "Update seats"]
     types: [completed]
 
 permissions:
@@ -19,8 +19,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Seats refresh every 15 minutes and most runs change nothing; deploying after each of those
+  # would reconnect to the host for no reason. If the seats run left the repo exactly where it
+  # started (HEAD is still the commit it ran on) there is nothing new to publish.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.decide.outputs.go }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decide
+        run: |
+          go=true
+          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "${{ github.event.workflow_run.name }}" = "Update seats" ] \
+             && [ "$(git rev-parse HEAD)" = "${{ github.event.workflow_run.head_sha }}" ]; then
+            go=false
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "deploy: $go"
+
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    needs: gate
+    if: ${{ needs.gate.outputs.go == 'true' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

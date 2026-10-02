@@ -49,6 +49,7 @@ AREA_URL = ("https://suis.sabanciuniv.edu/HbbmWeb/SU_DEGREE.p_list_courses"
 AREA_SUFFIXES = {"core": ["CEL"], "area": ["AEL", "ARE"], "free": ["FEL", "FRE"]}
 AREA_SUFFIX = {kind: names[0] for kind, names in AREA_SUFFIXES.items()}
 WORKING: dict[tuple[str, str], str] = {}      # (programme, kind) -> the area code that answered
+HARD_FAIL: set[tuple[str, str]] = set()       # (P_PROGRAM, area) the server doesn't know — asked once per run
 # FC_SOM is what the actual degree-detail page links to for the business school's courses;
 # FC_SBS is tried as a fallback in case a different programme or term uses that code instead.
 FACULTY_AREAS = [("FC_FENS", "E"), ("FC_FASS", "S"), ("FC_SOM", "M"), ("FC_SBS", "M")]
@@ -166,35 +167,49 @@ def parse_area_courses(html: str) -> list[str]:
     return list(seen)
 
 
-SUFFIX_KIND = {"CEL": "core", "ARE": "area", "FRE": "free"}
+SUFFIX_KIND = {"CEL": "core", "AEL": "area", "ARE": "area", "FEL": "free", "FRE": "free"}
+RAW_AREA = re.compile(r"P_AREA=([A-Za-z0-9_\-]+)([^\"'<>\s]*)", re.I)
 
 
-def area_links(soup) -> list[dict]:
+def _kind_for(area: str, label: str = "") -> str | None:
+    if area.startswith("FC_"):
+        return "faculty"
+    return kind_of(label) or SUFFIX_KIND.get(area.rsplit("_", 1)[-1].upper())
+
+
+def area_links(soup, raw: str = "") -> list[dict]:
     """Every p_list_courses link on a degree page, with the area it belongs to. The page links
-    each area's course list itself, so its P_AREA/P_FAC codes are the real ones — no guessing
-    (programmes don't all name their areas <PROGRAM>_CEL/_ARE/_FRE; unknown codes 500)."""
+    each area's course list itself, so its P_AREA / P_FAC / P_PROGRAM are the real ones — no
+    guessing (unknown area codes 500). Falls back to scanning the raw HTML for P_AREA=… so links
+    that live in an onclick or an inline script are found too."""
+    import html as htmlmod
     from urllib.parse import parse_qs
 
     out = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if "p_list_courses" not in href:
+        if "p_list_courses" not in href.lower():
             continue
-        tail = href.split("p_list_courses", 1)[1].lstrip("?&")
-        query = parse_qs(tail)
+        query = parse_qs(href.split("p_list_courses", 1)[1].lstrip("?&") if "p_list_courses" in href else "")
         area = (query.get("P_AREA") or [""])[0]
         if not area:
             continue
-        fac = (query.get("P_FAC") or [""])[0]
         row = a.find_parent("tr")
         label = clean(row.find(["td", "th"]).get_text(" ")) if row and row.find(["td", "th"]) else ""
-        kind = kind_of(label) or kind_of(clean(a.get_text(" ")))
-        if not kind:
-            if area.startswith("FC_"):
-                kind = "faculty"
-            else:
-                kind = SUFFIX_KIND.get(area.rsplit("_", 1)[-1])
-        out.append({"area": area, "fac": fac, "kind": kind, "label": label})
+        kind = _kind_for(area, label) or kind_of(clean(a.get_text(" ")))
+        out.append({"area": area, "fac": (query.get("P_FAC") or [""])[0], "kind": kind, "label": label,
+                    "program": (query.get("P_PROGRAM") or [""])[0]})
+    if out or not raw:
+        return out
+    seen = set()
+    for m in RAW_AREA.finditer(htmlmod.unescape(raw)):
+        query = parse_qs(m.group(2).lstrip("&"))
+        fac = (query.get("P_FAC") or [""])[0]
+        if (m.group(1), fac) in seen:
+            continue
+        seen.add((m.group(1), fac))
+        out.append({"area": m.group(1), "fac": fac, "kind": _kind_for(m.group(1)), "label": "",
+                    "program": (query.get("P_PROGRAM") or [""])[0]})
     return out
 
 
@@ -204,6 +219,7 @@ def parse_page(html: str) -> dict:
     from bs4.element import NavigableString, Tag
 
     soup = BeautifulSoup(html, "html.parser")
+    links = area_links(soup, html)              # before scripts are stripped: URLs can live in them
     for tag in soup(["script", "style"]):
         tag.decompose()
 
@@ -215,6 +231,7 @@ def parse_page(html: str) -> dict:
 
     # ---- summary: rows whose first cell names an area and that carry numbers
     summary: list[dict] = []
+    unknown: list[str] = []
     columns: list[str] = []
     in_summary = False
     for tr in soup.find_all("tr"):
@@ -254,6 +271,8 @@ def parse_page(html: str) -> dict:
                     entry["ects"] = values[1]
             if not any(s["name"] == entry["name"] for s in summary):
                 summary.append(entry)
+        elif in_summary and values and not kind and cells[0]:
+            unknown.append(cells[0])               # a summary row with numbers we have no name for
         elif in_summary and summary and not kind and not values and len(cells) == 1:
             in_summary = False
 
@@ -312,7 +331,7 @@ def parse_page(html: str) -> dict:
         if g["kind"] == "free" and not g["courses"]:
             g["any"] = True
     total = next((s for s in summary if s["kind"] == "total"), {})
-    return {"title": title, "groups": ordered, "credits": credits, "links": area_links(soup),
+    return {"title": title, "groups": ordered, "credits": credits, "links": links, "unrecognised": unknown,
             "totalCredits": total.get("credits"), "totalEcts": total.get("ects")}
 
 
@@ -341,6 +360,38 @@ def complete(store: dict, term: str) -> bool:
                if g.get("kind") in ("core", "area", "free", "faculty"))
 
 
+def put_entry(store: dict, hashes: dict, term: str, entry: dict) -> None:
+    """Store one entry term, pointing it at an identical earlier one (`sameAs`) so a requirement set
+    that didn't change across cohorts is kept once.
+
+    Two traps the naive version fell into: an unchanged term that is itself the one others point at
+    must stay a full entry (pointing it at itself wiped its data), and whenever a term stops holding
+    its old content, the terms that were pointing at it keep that old content instead of silently
+    inheriting the new one."""
+    h = digest({k: v for k, v in entry.items() if k != "source"})
+    entries = store["entries"]
+    target = hashes.get(h)                       # a term already holding exactly this content
+    if target == term:
+        entries[term] = entry                    # unchanged: stays a full entry
+        return
+    old = entries.get(term)
+    if old and "sameAs" not in old:              # `term` is about to give up its old content
+        old_h = digest({k: v for k, v in old.items() if k != "source"})
+        followers = [t for t, e in entries.items() if e.get("sameAs") == term and t != term]
+        if followers:
+            entries[followers[0]] = old          # the old content lives on under the first follower
+            for t in followers[1:]:
+                entries[t] = {"sameAs": followers[0]}
+            hashes[old_h] = followers[0]
+        else:
+            hashes.pop(old_h, None)
+    if target:
+        entries[term] = {"sameAs": target}
+    else:
+        hashes[h] = term
+        entries[term] = entry
+
+
 def digest(entry: dict) -> str:
     return hashlib.sha1(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:12]
 
@@ -355,8 +406,46 @@ def fetch_area(session, term: str, program: str, area: str, fac: str = "") -> li
     except Exception as exc:
         reason = "server error" if "500" in str(exc) else str(exc)[:120]
         print(f"    {area}{'/' + fac if fac else ''}: {reason}", file=sys.stderr)
+        if "500" in str(exc) and not fac:
+            HARD_FAIL.add((program, area))          # an unknown area name stays unknown for every entry term
         return None
-    return parse_area_courses(res.text)
+    courses = parse_area_courses(res.text)
+    if not courses:
+        print(f"    {area}{'/' + fac if fac else ''}: answered but had no course rows ({len(res.text)} bytes)",
+              file=sys.stderr)
+        if program.endswith(DM) and not fac:
+            HARD_FAIL.add((program, area))          # a double major's list under the major's name is empty by nature
+    return courses
+
+
+def borrow_from_major(groups: list[dict], program: str, term: str, out_dir: Path) -> list[str]:
+    """A double major's own elective lists aren't published under any name we can find: BSCS-DM_CEL
+    and friends answer 500, and BSCS_CEL asked as BSCS-DM answers with no rows. Those groups take the
+    main programme's list for the same entry term (credit targets still come from the double-major
+    page) and say so with `borrowed`, so the app can tell the student the list is the major's."""
+    base = base_of(program)
+    path = out_dir / f"{base}.json"
+    if base == program or not path.exists():
+        return []
+    entries = json.loads(path.read_text(encoding="utf-8")).get("entries", {})
+    entry = entries.get(term)
+    for _ in range(20):
+        if not entry or "sameAs" not in entry:
+            break
+        entry = entries.get(entry["sameAs"])
+    if not entry or "groups" not in entry:
+        return []
+    donors: dict[str, dict] = {}
+    for g in entry["groups"]:
+        if g.get("courses"):
+            donors.setdefault(g["kind"], g)
+    done = []
+    for g in groups:
+        if g["kind"] in AREA_SUFFIX and not g.get("courses") and g["kind"] in donors:
+            g["courses"] = list(donors[g["kind"]]["courses"])
+            g["borrowed"] = base
+            done.append(g["kind"])
+    return done
 
 
 def fill_area_courses(session, term: str, program: str, groups: list[dict], delay: float,
@@ -394,7 +483,9 @@ def fill_area_courses(session, term: str, program: str, groups: list[dict], dela
                 continue          # FC_SOM already answered for P_FAC=M, skip the FC_SBS fallback
             if link.get("alt") and codes:
                 break             # an earlier spelling already answered
-            got = fetch_area(session, term, program, link["area"], link["fac"])
+            if link.get("alt") and (link.get("program") or program, link["area"]) in HARD_FAIL:
+                continue          # already learned this run that it doesn't answer
+            got = fetch_area(session, term, link.get("program") or program, link["area"], link["fac"])
             time.sleep(delay)
             if got is None:
                 continue
@@ -408,6 +499,89 @@ def fill_area_courses(session, term: str, program: str, groups: list[dict], dela
         group["courses"] = list(codes)
         source = f"guessed {used}" if guessed and used else "guessed codes" if guessed else "codes from the degree page"
         print(f"    {kind}: {len(codes)} courses from {worked}/{len(found)} list(s), {source}")
+
+
+EXPECTED_KINDS = ["university", "required", "core", "area", "free", "faculty"]
+
+
+def summarise(data_dir: Path) -> list[str]:
+    """One line per stored programme: the newest entry's groups and how many courses each holds,
+    with MISSING for an expected group that isn't there and EMPTY for one with no courses.
+    Needs no network — it answers "did the scraper get anything?" from data/programs/."""
+    lines = []
+    for path in sorted((data_dir / "programs").glob("*.json")):
+        if path.stem in ("index", "overrides"):
+            continue
+        store = json.loads(path.read_text(encoding="utf-8"))
+        entries = store.get("entries", {})
+        if not entries:
+            lines.append(f"{path.stem:10} no entries")
+            continue
+        term = sorted(entries)[-1]
+        entry = entries[term]
+        for _ in range(20):
+            if "sameAs" not in entry:
+                break
+            entry = entries[entry["sameAs"]]
+        by_kind: dict[str, list[dict]] = {}
+        for g in entry.get("groups", []):
+            by_kind.setdefault(g.get("kind"), []).append(g)
+        parts = []
+        for kind in EXPECTED_KINDS:
+            gs = by_kind.get(kind)
+            if not gs:
+                parts.append(f"{kind}=MISSING")
+                continue
+            n = sum(len(g.get("courses") or []) for g in gs)
+            parts.append(f"{kind}={n}" + ("" if n or any(g.get("any") for g in gs) else " EMPTY"))
+        extra = [k for k in by_kind if k not in EXPECTED_KINDS and k != "total"]
+        lines.append(f"{path.stem:10} {term}  " + "  ".join(parts) + (f"  (+{','.join(extra)})" if extra else "")
+                     + f"  [{len(entries)} entry terms]")
+    return lines
+
+
+def probe(program: str, term: str) -> list[str]:
+    """Look at one programme's live pages and say what's there: the groups and summary rows read,
+    every area link found (and how), and for each area which spellings the server answers and how
+    many course rows come back. For working out why a programme's lists are empty."""
+    session = make_probe_session()
+    out = [f"== {program} entered {term}"]
+    url = URL.format(term=term, program=program)
+    try:
+        res = session.get(url, timeout=60)
+    except Exception as exc:
+        return out + [f"degree page: failed ({str(exc)[:100]})"]
+    out.append(f"degree page: HTTP {res.status_code}, {len(res.text)} bytes")
+    if res.status_code != 200:
+        return out
+    parsed = parse_page(res.text)
+    for g in parsed["groups"]:
+        nums = ", ".join(f"{k}={g[k]}" for k in ("credits", "ects", "minCourses") if k in g)
+        out.append(f"  group  {g['kind']:12} {g['name']!r:34} {nums}  courses on page: {len(g['courses'])}")
+    if parsed.get("unrecognised"):
+        out.append(f"  summary rows with numbers but no known name: {parsed['unrecognised']}")
+    out.append(f"  area links found: {len(parsed['links'])}")
+    for l in parsed["links"]:
+        out.append(f"    {l['kind'] or '?':10} P_AREA={l['area']}  P_FAC={l['fac'] or '-'}  P_PROGRAM={l.get('program') or '-'}")
+    import re as _re
+    for m in list(_re.finditer(r"p_list_courses", res.text, _re.I))[:2]:
+        snippet = " ".join(res.text[max(0, m.start() - 90): m.end() + 140].split())
+        out.append(f"  html around a p_list_courses mention: …{snippet}…")
+    base = base_of(program)
+    for kind in ("core", "area", "free"):
+        tries = [(a, program) for a in area_candidates(program, kind)]
+        if program != base:
+            tries += [(a, base) for a in area_candidates(base, kind)]       # the major's own list, for comparison
+        for area, p_program in tries:
+            try:
+                r = session.get(AREA_URL.format(term=term, area=area, program=p_program), timeout=45)
+                rows = len(parse_area_courses(r.text)) if r.status_code == 200 else None
+                result = f"HTTP {r.status_code}" + (f", {rows} course rows, {len(r.text)} bytes" if rows is not None else "")
+            except Exception as exc:
+                result = f"failed ({str(exc)[:60]})"
+            out.append(f"  try {kind:5} P_AREA={area:14} P_PROGRAM={p_program:10} -> {result}")
+            time.sleep(0.5)
+    return out
 
 
 def main(argv=None) -> int:
@@ -429,7 +603,21 @@ def main(argv=None) -> int:
     ap.add_argument("--dump-area", help="fetch one area's page (needs --programs/--entries and "
                     "--dump-area = core|area|free|faculty) and save it here, then stop")
     ap.add_argument("--print", action="store_true", help="show what was parsed, write nothing")
+    ap.add_argument("--summary", action="store_true",
+                    help="list what data/programs/ holds per programme (no network) and stop")
+    ap.add_argument("--probe", action="store_true",
+                    help="query --programs at --entries and report what the pages contain (writes nothing)")
     args = ap.parse_args(argv)
+
+    if args.summary:
+        print("\n".join(summarise(Path(args.data))))
+        return 0
+    if args.probe:
+        targets = args.programs if "--programs" in (argv or sys.argv) else ["BSCS"]
+        for program in targets:
+            for entry_term in (args.entries or ["202601"]):
+                print("\n".join(probe(program, entry_term)))
+        return 0
 
     data_dir = Path(args.data)
     out_dir = data_dir / "programs"
@@ -516,14 +704,13 @@ def main(argv=None) -> int:
             if not args.no_areas:
                 fill_area_courses(probe, entry_term, program, parsed["groups"], args.delay,
                                   parsed.get("links"))
+                if is_dm:
+                    took = borrow_from_major(parsed["groups"], program, entry_term, out_dir)
+                    if took:
+                        print(f"    no double-major list found for {', '.join(took)} — using {base_of(program)}'s own")
             entry = {"groups": parsed["groups"], "credits": parsed["credits"],
                      "totalCredits": parsed["totalCredits"], "totalEcts": parsed["totalEcts"], "source": url}
-            h = digest({k: v for k, v in entry.items() if k != "source"})
-            if h in hashes:
-                store["entries"][entry_term] = {"sameAs": hashes[h]}
-            else:
-                hashes[h] = entry_term
-                store["entries"][entry_term] = entry
+            put_entry(store, hashes, entry_term, entry)
             if parsed["title"] and store["name"] == program:
                 store["name"] = parsed["title"]
             print(f"  {len(parsed['groups'])} areas, {sum(len(g['courses']) for g in parsed['groups'])} courses")

@@ -207,10 +207,17 @@ async function loadRequirements(code, entryTerm) {
     App.programFiles[code] = file;
   }
   const entries = file.entries || {};
-  let term = entryTerm && entries[entryTerm] ? entryTerm : Object.keys(entries).sort().reverse()[0];
-  let entry = entries[term];
-  for (let hop = 0; entry && entry.sameAs && hop < 20; hop += 1) entry = entries[entry.sameAs];
-  if (!entry) return null;
+  const resolve = (t) => {
+    let e = entries[t];
+    for (let hop = 0; e && e.sameAs && hop < 20; hop += 1) e = entries[e.sameAs];
+    return e && e.groups ? e : null;
+  };
+  // the chosen entry term, else the newest one that actually holds requirements (a half-written
+  // or emptied record shouldn't blank the whole programme)
+  const wanted = entryTerm && entries[entryTerm] ? entryTerm : null;
+  const term = [wanted, ...Object.keys(entries).sort().reverse()].find((t) => t && resolve(t));
+  if (!term) return null;
+  const entry = resolve(term);
   const overrides = await loadOverrides();
   const patched = applyOverrides(entry, code, term, overrides);
   return { code, name: file.name, entry: term, ...patched };
@@ -2090,6 +2097,7 @@ function renderRequirementsDialog() {
 
   $('#req-dlg-body').innerHTML = `
     <p class="cat-sub">${esc(parts.join(', ') || `${matches.length} courses`)}</p>
+    ${group.borrowed ? `<p class="cat-sub">This list is the ${esc(group.borrowed)} major's — a separate double-major list isn't published, so the same courses are assumed to count.</p>` : ''}
     <div class="bar req-pool-bar"><span style="width:${Math.round(ratio * 100)}%"></span>
       ${earnedRatio ? `<i style="width:${Math.round(earnedRatio * 100)}%"></i>` : ''}</div>
     <div class="req-pool-legend">

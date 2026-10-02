@@ -323,6 +323,32 @@ the app reads the `-DM` file for it (and falls back to the normal one if that ha
 A `-DM` programme that doesn't exist is dropped after three entry terms with no page, so the
 programmes without a double major don't cost a full sweep each.
 
+**When a programme's lists come back empty:**
+
+```bash
+python3 scraper/programs.py --summary                       # what data/programs/ holds, no network
+python3 scraper/programs.py --probe --programs BSMAT --entries 202601
+```
+
+`--summary` prints one line per programme (`core=31`, `core=0 EMPTY`, `area=MISSING`). `--probe` looks
+at the live pages: the groups and summary rows it read (and any row it has no name for), every area
+link on the page and how it was found, which area spellings the server answers and how many
+course rows each returns. It writes nothing, and works for any programme code, minors included.
+
+**Publishing.** The site is rebuilt and uploaded after any of `update-data`, `update-details` and
+`update-seats` finish (a push to `main` goes through `update-data`), so freshly scraped programmes
+reach the host without a manual deploy. A seats run that left the repo untouched is skipped.
+
+**Double-major lists.** The `-DM` pages publish their credit targets but, as far as the scraper
+can find, no lists of their own (`BSCS-DM_CEL` answers 500; `BSCS_CEL` asked as `BSCS-DM` answers with
+no rows). Those groups take the main programme's list for the same entry term and carry a
+`borrowed` marker, which the requirements popup spells out. If the page does turn out to link its
+own lists, `--probe --programs BSCS-DM` shows them and the scraper will prefer them.
+
+**Re-runs are safe.** The two newest entry terms are re-fetched on every run; an entry that comes
+back unchanged stays a full record, and when one changes, older cohorts that were sharing its old
+content keep it. (Before, an unchanged newest entry pointed at itself and lost its data.)
+
 **Area codes.** Banner spells a programme's electives `<PROGRAM>_CEL` / `_AEL` / `_FEL` (BSCS), with
 `_ARE` / `_FRE` as the older spelling BSEE's links used. The scraper tries the standard one first
 and falls back, remembers which worked for the next entry term, and does not retry a 500 (Banner's

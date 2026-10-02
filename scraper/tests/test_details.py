@@ -247,6 +247,7 @@ def test_area_spellings_and_memory():
     worked is tried first for the next entry term."""
     import programs
     programs.WORKING.clear()
+    programs.HARD_FAIL.clear()
     calls = []
 
     class S:
@@ -289,6 +290,7 @@ def test_double_major_programmes():
     assert programs.area_candidates("BSCS-DM", "core") == ["BSCS-DM_CEL", "BSCS_CEL"]
 
     programs.WORKING.clear()
+    programs.HARD_FAIL.clear()
     urls = []
 
     class S:
@@ -331,6 +333,186 @@ def test_double_major_that_does_not_exist_is_dropped_quickly():
     assert (data / "programs" / "BSCS.json").exists() and not (data / "programs" / "BSCS-DM.json").exists()
     codes = [p["code"] for p in json.loads((data / "programs" / "index.json").read_text())["programs"]]
     assert codes == ["BSCS"], codes                                         # no empty "BSCS-DM" in the list
+
+
+def test_area_links_found_in_scripts_and_with_new_suffixes():
+    """Links that aren't plain <a href>s (an onclick, an inline script) are still found, a link's own
+    P_PROGRAM is kept, and AEL / FEL are recognised as area / free."""
+    import programs
+    page = """<html><body><table>
+      <tr><td colspan=4><b>SUMMARY OF DEGREE REQUIREMENTS</b></td></tr>
+      <tr><th></th><th>Minimum SU Credits</th></tr>
+      <tr><td>Core Electives</td><td>18</td></tr>
+      <tr><td>Area Electives</td><td>9</td></tr>
+      <tr><td>Free Electives</td><td>12</td></tr>
+      <tr><td>Quantum Credit</td><td>4</td></tr>
+      </table>
+      <button onclick="go('SU_DEGREE.p_list_courses?P_TERM=202601&amp;P_AREA=BSMAT_CEL&amp;P_PROGRAM=BSMAT-DM&amp;P_LANG=EN')">x</button>
+      <script>var u = "SU_DEGREE.p_list_courses?P_TERM=202601&P_AREA=BSMAT_AEL&P_PROGRAM=BSMAT&P_LANG=EN";
+              var f = "SU_DEGREE.p_list_courses?P_TERM=202601&P_AREA=BSMAT_FEL&P_PROGRAM=BSMAT&P_LANG=EN";
+              var s = "SU_DEGREE.p_list_courses?P_TERM=202601&P_AREA=FC_FENS&P_PROGRAM=BSMAT&P_FAC=E&P_LANG=EN";</script>
+      </body></html>"""
+    parsed = programs.parse_page(page)
+    found = {(l["area"], l["kind"], l["fac"], l["program"]) for l in parsed["links"]}
+    assert ("BSMAT_CEL", "core", "", "BSMAT-DM") in found, found
+    assert ("BSMAT_AEL", "area", "", "BSMAT") in found and ("BSMAT_FEL", "free", "", "BSMAT") in found
+    assert ("FC_FENS", "faculty", "E", "BSMAT") in found
+    assert parsed["unrecognised"] == ["Quantum Credit"], parsed["unrecognised"]
+
+    asked = []
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            asked.append(url)
+            return _list("MAT 301")
+
+    g = [{"name": "Core Electives", "kind": "core", "courses": []}]
+    programs.fill_area_courses(S(), "202601", "BSMAT-DM", g, 0, parsed["links"])
+    assert g[0]["courses"] == ["MAT 301"] and "P_AREA=BSMAT_CEL" in asked[0] and "P_PROGRAM=BSMAT-DM" in asked[0], asked
+
+
+def test_summary_and_probe():
+    import json
+    import tempfile
+    import programs
+    data = Path(tempfile.mkdtemp())
+    (data / "programs").mkdir()
+    full = {"groups": [{"kind": k, "name": k, "courses": ["X 101"]} for k in programs.EXPECTED_KINDS]}
+    thin = {"groups": [{"kind": "university", "name": "u", "courses": ["X 101"]},
+                       {"kind": "required", "name": "r", "courses": ["X 102"]},
+                       {"kind": "core", "name": "c", "courses": []}, {"kind": "free", "name": "f", "any": True, "courses": []}]}
+    (data / "programs" / "BSCS.json").write_text(json.dumps({"entries": {"202501": full, "202601": {"sameAs": "202501"}}}))
+    (data / "programs" / "BSMAT.json").write_text(json.dumps({"entries": {"202601": thin}}))
+    (data / "programs" / "overrides.json").write_text("{}")
+    lines = programs.summarise(data)
+    assert len(lines) == 2 and "core=1" in lines[0] and "MISSING" not in lines[0], lines
+    assert "core=0 EMPTY" in lines[1] and "area=MISSING" in lines[1] and "free=0" in lines[1] and "free=0 EMPTY" not in lines[1], lines
+
+    class R:
+        def __init__(self, code, text=""):
+            self.status_code, self.text = code, text
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            if "p_degree_detail" in url:
+                return R(200, (HERE / "fixture_degree.html").read_text(encoding="utf-8"))
+            return R(200, "<table><tr><td>CS 301</td></tr></table>") if "P_AREA=BSCS_CEL" in url else R(500)
+
+    real = programs.make_probe_session
+    programs.make_probe_session = lambda: S()
+    time_sleep, programs.time.sleep = programs.time.sleep, lambda x: None
+    try:
+        out = "\n".join(programs.probe("BSCS", "202601"))
+    finally:
+        programs.make_probe_session, programs.time.sleep = real, time_sleep
+    assert "HTTP 200" in out and "group  core" in out and "-> HTTP 200, 1 course rows" in out and "-> HTTP 500" in out, out
+
+
+def test_unknown_area_names_are_asked_once_per_run():
+    import programs
+    programs.WORKING.clear()
+    programs.HARD_FAIL.clear()
+    asked = []
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            asked.append(url.split("P_AREA=")[1].split("&")[0])
+            return _Resp("", 500) if "BSCS-DM_" in url else _Resp("<table></table>")   # DM names unknown, base names answer empty
+
+    def groups():
+        return [{"name": "Core Electives", "kind": "core", "courses": []}]
+
+    programs.fill_area_courses(S(), "202601", "BSCS-DM", groups(), 0)
+    first = list(asked)
+    asked.clear()
+    programs.fill_area_courses(S(), "202501", "BSCS-DM", groups(), 0)
+    assert first == ["BSCS-DM_CEL", "BSCS_CEL"], first
+    assert asked == [], asked              # neither the unknown name nor the empty answer is asked again
+
+
+def test_double_major_borrows_the_majors_lists():
+    import json
+    import tempfile
+    import programs
+    out = Path(tempfile.mkdtemp())
+    (out / "BSCS.json").write_text(json.dumps({"entries": {
+        "202501": {"groups": [{"kind": "core", "name": "Core Electives", "courses": ["CS 301", "CS 306"]},
+                              {"kind": "area", "name": "Area Electives", "courses": ["CS 412"]},
+                              {"kind": "free", "name": "Free Electives", "courses": ["HUM 207"]}]},
+        "202601": {"sameAs": "202501"}}}))
+    groups = [{"kind": "core", "name": "Core Electives", "credits": 9, "courses": []},
+              {"kind": "area", "name": "Area Electives", "courses": ["CS 999"]},          # already has its own list
+              {"kind": "free", "name": "Free Electives", "any": True, "courses": []},
+              {"kind": "required", "name": "Required", "courses": []}]
+    took = programs.borrow_from_major(groups, "BSCS-DM", "202601", out)                    # follows sameAs
+    assert took == ["core", "free"], took
+    assert groups[0]["courses"] == ["CS 301", "CS 306"] and groups[0]["borrowed"] == "BSCS" and groups[0]["credits"] == 9
+    assert groups[1]["courses"] == ["CS 999"] and "borrowed" not in groups[1]
+    assert groups[2]["courses"] == ["HUM 207"] and groups[3]["courses"] == []
+    assert programs.borrow_from_major(groups, "BSCS", "202601", out) == []                 # a normal major never borrows
+    assert programs.borrow_from_major([{"kind": "core", "courses": []}], "BSMAT-DM", "202601", out) == []   # no major file yet
+
+
+def test_rerunning_never_wipes_stored_entries():
+    """The newest entry terms are re-fetched on every run. When one came back unchanged it used to be
+    stored as sameAs *itself*, which erased the programme's data. Unchanged terms must stay full; a
+    changed one must not drag the older terms that pointed at it along."""
+    import contextlib
+    import io
+    import json
+    import tempfile
+    import programs
+    data = Path(tempfile.mkdtemp())
+    (data / "terms.json").write_text(json.dumps({"terms": [{"code": "202601"}]}))
+    page = ("<html><body><table><tr><td colspan=3><b>SUMMARY OF DEGREE REQUIREMENTS</b></td></tr>"
+            "<tr><th></th><th>Minimum SU Credits</th></tr><tr><td>Core Electives</td><td>18</td></tr></table></body></html>")
+    state = {"core": ["CS 301"]}
+    asked = []
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            asked.append(url)
+            if "p_degree_detail" in url:
+                return _Resp(page)
+            return _list(*state["core"])
+
+    real = (programs.make_session, programs.make_probe_session, programs.time.sleep)
+    programs.make_session = programs.make_probe_session = lambda: S()
+    programs.time.sleep = lambda x: None
+
+    def run():
+        programs.WORKING.clear()
+        programs.HARD_FAIL.clear()
+        asked.clear()
+        with contextlib.redirect_stdout(io.StringIO()):
+            programs.main(["--data", str(data), "--delay", "0", "--programs", "BSCS",
+                           "--entries", "202601", "202501", "202401", "202301"])
+        return json.loads((data / "programs" / "BSCS.json").read_text())["entries"], len(asked)
+
+    try:
+        first, n1 = run()
+        assert "groups" in first["202601"] and all(first[t] == {"sameAs": "202601"} for t in ("202501", "202401", "202301"))
+        again, n2 = run()                                     # nothing changed
+        assert "groups" in again["202601"], again["202601"]    # still a full entry, not {"sameAs": "202601"}
+        assert [t for t, e in again.items() if "sameAs" not in e] == ["202601"]
+        assert n2 < n1, (n1, n2)                              # the old cohorts were skipped, only the two newest re-fetched
+        state["core"] = ["CS 301", "CS 306"]                  # the newest cohorts' list grows
+        third, _ = run()
+
+        def core(term):                                       # what a student of that cohort would see
+            e = third[term]
+            for _ in range(10):
+                if "sameAs" not in e:
+                    break
+                e = third[e["sameAs"]]
+            return e["groups"][0]["courses"]
+
+        assert core("202601") == ["CS 301", "CS 306"] and core("202501") == ["CS 301", "CS 306"]   # re-fetched, so both moved
+        assert core("202401") == ["CS 301"] and core("202301") == ["CS 301"], third           # older cohorts keep the old content
+        assert all("sameAs" in e or "groups" in e for e in third.values())
+        assert all(e.get("sameAs") != t for t, e in third.items())                           # nothing points at itself
+    finally:
+        programs.make_session, programs.make_probe_session, programs.time.sleep = real
 
 
 def test_kind_of_basic_science_engineering():
