@@ -176,7 +176,7 @@ async function loadOverrides() {
 }
 
 function applyOverrides(entry, code, entryTerm, overrides) {
-  const base = String(code).replace(/-DM$/, '');
+  const base = baseCode(code);
   const forProgram = (o) => o.program === '*' || o.program === base || (Array.isArray(o.program) && o.program.includes(base));
   const inRange = (o) => !o.entries || ((!o.entries.from || entryTerm >= o.entries.from) && (!o.entries.to || entryTerm <= o.entries.to));
   const relevant = overrides.filter((o) => forProgram(o) && inRange(o));
@@ -1096,7 +1096,7 @@ function applyRegPrograms(first, second) {
   const before = [plan.program, plan.program2];
   plan.program = known(p1) ? p1 : null;
   plan.regPrimary = plan.program ? null : (first || null);
-  plan.program2 = known(p2 && `${p2}-DM`) ? `${p2}-DM` : null;
+  plan.program2 = (p2 && dmCode(p2)) || null;
   plan.regSecond = plan.program2 ? null : (second || null);
   if (plan.program !== before[0]) plan.entry = plan.terms[0] ? plan.terms[0].id : null;
   if (plan.program2 !== before[1]) plan.entry2 = plan.terms[0] ? plan.terms[0].id : null;
@@ -2043,8 +2043,15 @@ function suggestedTermId() {
 
 /** The double-major version of a programme's requirements (BSCS-DM), if it has been scraped. */
 const isDM = (code) => /-DM$/.test(code || '');
-const baseCode = (code) => String(code || '').replace(/-DM$/, '');
-const dmCode = (code) => ((App.programs || []).some((p) => p.code === `${baseCode(code)}-DM`) ? `${baseCode(code)}-DM` : null);
+// A double major's code is the programme's plus -DM (BSCS -> BSCS-DM), except Industrial Engineering:
+// BSMS, whose double major is BSIE-DM.
+const DM_OF = { BSMS: 'BSIE-DM' };
+const DM_BASE = Object.fromEntries(Object.entries(DM_OF).map(([base, dm]) => [dm, base]));
+const baseCode = (code) => DM_BASE[code] || String(code || '').replace(/-DM$/, '');
+const dmCode = (code) => {
+  const dm = DM_OF[baseCode(code)] || `${baseCode(code)}-DM`;
+  return (App.programs || []).some((p) => p.code === dm) ? dm : null;
+};
 const subjectOf = (code) => PROGRAM_SUBJECT[baseCode(code)];
 const programForSubject = (subject) => Object.keys(PROGRAM_SUBJECT).find((k) => PROGRAM_SUBJECT[k] === subject);
 
@@ -2213,7 +2220,7 @@ function renderPlanner() {
   const earned = earnedCredits(planned);
 
   const entryOptions1 = entrySelectOptions(plan.program, programs[0] && programs[0].entry);
-  const entryOptions2 = entrySelectOptions(plan.program2 && dmCode(plan.program2), programs[1] && programs[1].entry);
+  const entryOptions2 = entrySelectOptions(plan.program2, programs[1] && programs[1].entry);
 
   const stats = [
     overall ? `<span class="stat">CGPA <b>${overall.gpa.toFixed(2)}</b></span>` : '',

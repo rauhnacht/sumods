@@ -70,7 +70,19 @@ PROGRAMS = {
 DM = "-DM"        # P_PROGRAM=BSCS-DM is the double-major version of BSCS's requirements
 
 
+# A double major is the programme code plus -DM (BSCS -> BSCS-DM), except where the university breaks the
+# pattern: Industrial Engineering is BSMS, but its double major is BSIE-DM.
+DM_CODES = {"BSMS": "BSIE-DM"}
+DM_BASE = {dm: base for base, dm in DM_CODES.items()}
+
+
+def dm_of(code: str) -> str:
+    return DM_CODES.get(code, code + DM)
+
+
 def base_of(code: str) -> str:
+    if code in DM_BASE:
+        return DM_BASE[code]
     return code[: -len(DM)] if code.endswith(DM) else code
 
 
@@ -82,7 +94,7 @@ def programme_name(code: str) -> str:
 def all_programmes() -> list[str]:
     """Every programme, then its double-major variant — the primary ones first, so a run that
     runs out of budget has finished the majority of students' programmes."""
-    return list(PROGRAMS) + [code + DM for code in PROGRAMS]
+    return list(PROGRAMS) + [dm_of(code) for code in PROGRAMS]
 
 
 def area_candidates(program: str, kind: str) -> list[str]:

@@ -24,6 +24,8 @@ const FILES = {
   BSMAT: programme('Materials Science and Nano Engineering', 125, ['MAT 301', 'MAT 306'], false),
   'BSMAT-DM': programme('Materials Science and Nano Engineering (Double Major)', 65, [], true),
   BSCS: programme('Computer Science and Engineering', 125, ['CS 301'], false),
+  BSMS: programme('Industrial Engineering', 126, ['IE 301', 'IE 305'], false),
+  'BSIE-DM': programme('Industrial Engineering (Double Major)', 60, [], true),   // Industrial's double major is BSIE-DM, not BSMS-DM
 };
 
 const build = () => execSync('python3 build_standalone.py', { cwd: root, stdio: 'ignore' });
@@ -113,12 +115,12 @@ async function doubleMajorTest() {
   await p.locator('.tabs [data-view="plan"]').click(); await p.waitForTimeout(400);
   const opts = async (sel) => (await p.locator(`${sel} option`).evaluateAll((o) => o.map((x) => x.value))).filter(Boolean);
 
-  check('main picker lists only normal programmes', JSON.stringify(await opts('#plan-program')) === '["BSEE","BSMAT","BSCS"]', JSON.stringify(await opts('#plan-program')));
-  check('double-major picker lists only -DM programmes', JSON.stringify(await opts('#plan-program2')) === '["BSEE-DM","BSMAT-DM"]', JSON.stringify(await opts('#plan-program2')));
+  check('main picker lists only normal programmes', JSON.stringify(await opts('#plan-program')) === '["BSEE","BSMAT","BSCS","BSMS"]', JSON.stringify(await opts('#plan-program')));
+  check('double-major picker lists only -DM programmes', JSON.stringify(await opts('#plan-program2')) === '["BSEE-DM","BSMAT-DM","BSIE-DM"]', JSON.stringify(await opts('#plan-program2')));
   await p.selectOption('#plan-program', 'BSEE'); await p.waitForTimeout(400);
-  check('with BSEE as the main programme, BSEE-DM is not offered', JSON.stringify(await opts('#plan-program2')) === '["BSMAT-DM"]', JSON.stringify(await opts('#plan-program2')));
+  check('with BSEE as the main programme, BSEE-DM is not offered', JSON.stringify(await opts('#plan-program2')) === '["BSMAT-DM","BSIE-DM"]', JSON.stringify(await opts('#plan-program2')));
   await p.selectOption('#plan-program2', 'BSMAT-DM'); await p.waitForTimeout(500);
-  check('…and BSMAT is no longer offered as a main programme', JSON.stringify(await opts('#plan-program')) === '["BSEE","BSCS"]', JSON.stringify(await opts('#plan-program')));
+  check('…and BSMAT is no longer offered as a main programme', JSON.stringify(await opts('#plan-program')) === '["BSEE","BSCS","BSMS"]', JSON.stringify(await opts('#plan-program')));
 
   const dm = await p.evaluate(() => { const r = activePrograms().find((x) => x.code === 'BSMAT-DM'); return r.groups.filter((g) => ['core', 'area', 'free'].includes(g.kind)).map((g) => [g.kind, (g.courses || []).length, g.borrowed || null, g.credits || null]); });
   check("BSMAT-DM's core/area/free are BSMAT's own lists (credit targets stay the DM's)", JSON.stringify(dm) === '[["core",2,"BSMAT",9],["area",1,"BSMAT",9],["free",1,"BSMAT",12]]', JSON.stringify(dm));
@@ -149,6 +151,20 @@ async function doubleMajorTest() {
   // an older plan that stored the plain code for the double major
   const migrated = await p.evaluate(async () => { const pl = planState(); pl.program = 'BSEE'; pl.regPrimary = null; pl.program2 = 'BSMAT'; await refreshRequirements(); return planState().program2; });
   check('an older plan with program2 = BSMAT becomes BSMAT-DM', migrated === 'BSMAT-DM', migrated);
+  // ---- Industrial Engineering: BSMS, but its double major is BSIE-DM
+  await p.locator('.tabs [data-view="plan"]').click(); await p.waitForTimeout(300);
+  await p.selectOption('#plan-program', 'BSEE'); await p.waitForTimeout(300);
+  await p.selectOption('#plan-program2', 'BSIE-DM'); await p.waitForTimeout(500);
+  const ie = await p.evaluate(() => { const r = activePrograms().find((x) => x.code === 'BSIE-DM'); return r && r.groups.filter((g) => g.kind === 'core').map((g) => [(g.courses || []).length, g.borrowed || null]); });
+  check("BSIE-DM takes BSMS's own lists, not a BSMS-DM that doesn't exist", JSON.stringify(ie) === '[[2,"BSMS"]]', JSON.stringify(ie));
+  check('the main picker no longer offers BSMS while BSIE-DM is the double major', !(await opts('#plan-program')).includes('BSMS'));
+  await p.locator('.tabs [data-view="timetable"]').click(); await p.waitForTimeout(300);
+  check('registration panel shows the IE department for BSIE-DM', (await p.inputValue('#reg-major2')) === 'IE', await p.inputValue('#reg-major2'));
+  await p.selectOption('#reg-major2', 'MAT'); await p.waitForTimeout(300);
+  await p.selectOption('#reg-major2', 'IE'); await p.waitForTimeout(300);
+  check('choosing IE as the double major in the panel gives BSIE-DM', (await p.evaluate(() => planState().program2)) === 'BSIE-DM', await p.evaluate(() => planState().program2));
+  const migratedIE = await p.evaluate(async () => { planState().program2 = 'BSMS'; planState().program = 'BSEE'; await refreshRequirements(); return planState().program2; });
+  check('an older plan with program2 = BSMS becomes BSIE-DM', migratedIE === 'BSIE-DM', migratedIE);
   console.log(log.join('\n')); console.log('errors:', errs.length ? errs : 'none');
   await b.close();
   return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;

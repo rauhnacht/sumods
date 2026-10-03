@@ -284,6 +284,11 @@ def test_double_major_programmes():
     import programs
     assert "BSCS-DM" in programs.all_programmes() and programs.all_programmes()[:12] == list(programs.PROGRAMS)
     assert programs.base_of("BSCS-DM") == "BSCS" and programs.base_of("BSCS") == "BSCS"
+    # Industrial Engineering breaks the pattern: BSMS, but its double major is BSIE-DM (not BSMS-DM)
+    assert programs.dm_of("BSMS") == "BSIE-DM" and programs.dm_of("BSCS") == "BSCS-DM"
+    assert programs.base_of("BSIE-DM") == "BSMS" and "BSIE-DM" in programs.all_programmes()
+    assert "BSMS-DM" not in programs.all_programmes() and programs.all_programmes()[-12:].count("BSIE-DM") == 1
+    assert programs.programme_name("BSIE-DM") == "Industrial Engineering (Double Major)"
     assert programs.programme_name("BSCS-DM") == "Computer Science and Engineering (Double Major)"
     assert "P_PROGRAM=BSCS-DM&" in programs.URL.format(term="202601", program="BSCS-DM")
     assert programs.area_candidates("BSCS", "area") == ["BSCS_AEL", "BSCS_ARE"]
@@ -303,6 +308,18 @@ def test_double_major_programmes():
     programs.fill_area_courses(S(), "202601", "BSCS-DM", g, 0)
     assert g[0]["courses"] == [], g                                          # left for borrow_from_major, no request made
     assert urls and all("P_AREA=FC_" in u and "P_PROGRAM=BSCS-DM" in u for u in urls), urls   # faculty lists still asked
+
+
+def test_industrial_double_major_borrows_from_bsms():
+    import json
+    import tempfile
+    import programs
+    out = Path(tempfile.mkdtemp())
+    (out / "BSMS.json").write_text(json.dumps({"entries": {"202601": {"groups": [
+        {"kind": "core", "name": "Core Electives", "courses": ["IE 301", "IE 305"]}]}}}))
+    groups = [{"kind": "core", "name": "Core Electives", "credits": 9, "courses": []}]
+    assert programs.borrow_from_major(groups, "BSIE-DM", "202601", out) == ["core"]
+    assert groups[0]["courses"] == ["IE 301", "IE 305"] and groups[0]["borrowed"] == "BSMS", groups
 
 
 def test_double_major_that_does_not_exist_is_dropped_quickly():

@@ -350,6 +350,11 @@ double major's), and "Undeclared" is a main-programme choice only. A course put 
 planned for that term too; it leaves the plan again when the timetable drops it, unless a grade was entered.
 Deleting it from the plan sticks while it stays in the timetable.
 
+**Double-major codes.** A double major is the programme code plus `-DM` (BSCS → BSCS-DM) with one exception:
+Industrial Engineering is `BSMS`, but its double major is `BSIE-DM`. The mapping lives in `DM_CODES` in
+`scraper/programs.py` and `DM_OF` in `app.js`; a programme that breaks the pattern shows up in the log as
+"nothing for 3 entry terms in a row" and gets one line in each.
+
 **Double-major lists.** A double major's core, area and free electives are exactly its major's: BSMAT-DM uses
 BSMAT's lists, taken for the same entry term, while the credit targets still come from the `-DM` page. The
 scraper no longer asks the server for them (it copies from the major's file, marking each group `borrowed`) and
