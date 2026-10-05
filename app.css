@@ -521,6 +521,9 @@ main { padding: 14px max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-a
 .regdays:empty { display: none; }
 .reg-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 8px; }
 .reg-head .side-head { margin: 0; }
+.minor-chip { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; max-width: 100%; background: var(--surface); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 6px 3px 12px; font-size: 13px; }
+.minor-chip b { white-space: nowrap; }
+.minor-chip .select { min-width: 0; padding-top: 3px; padding-bottom: 3px; font-size: 13px; }
 .reg-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); font-weight: 600; }
 .reg-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .reg-table th { text-align: left; font-size: 11px; color: var(--ink-3); font-weight: 600; padding-bottom: 4px; }

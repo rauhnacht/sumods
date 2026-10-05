@@ -18,6 +18,13 @@ function programme(name, total, core, dm) {
     { name: 'Free Electives', kind: 'free', credits: 12, any: true, courses: dm ? [] : ['HUM 207'] }], totalCredits: total } } };
 }
 
+function minor(name, required, core, area) {
+  return { name, entries: { 202601: { groups: [
+    { name: 'Required Courses', kind: 'required', credits: 6, minCourses: 2, courses: required },
+    { name: 'Core Electives', kind: 'core', credits: 6, minCourses: 2, courses: core },
+    { name: 'Area Electives', kind: 'area', credits: 6, minCourses: 2, courses: area }], totalCredits: 18 } } };
+}
+
 const FILES = {
   BSEE: programme('Electronics Engineering', 129, ['EE 311', 'EE 313'], false),
   'BSEE-DM': programme('Electronics Engineering (Double Major)', 70, [], true),
@@ -26,6 +33,8 @@ const FILES = {
   BSCS: programme('Computer Science and Engineering', 125, ['CS 301'], false),
   BSMS: programme('Industrial Engineering', 126, ['IE 301', 'IE 305'], false),
   'BSIE-DM': programme('Industrial Engineering (Double Major)', 60, [], true),   // Industrial's double major is BSIE-DM, not BSMS-DM
+  'PHIL-MINOR': minor('Philosophy (Minor)', ['HUM 207', 'PHIL 202'], ['PHIL 300', 'PHIL 301'], ['PHIL 322']),
+  'MATH-MINOR': minor('Mathematics (Minor)', ['MATH 201', 'MATH 203'], ['MATH 306'], ['MATH 204']),
 };
 
 const build = () => execSync('python3 build_standalone.py', { cwd: root, stdio: 'ignore' });
@@ -53,7 +62,7 @@ async function featuresTest() {
   const add = async (c) => { await p.fill('#search', c); await p.waitForTimeout(140); const h = p.locator(`#search-results [data-code="${c}"]`).first(); if (await h.count()) { await h.click(); await p.waitForTimeout(150); } };
 
   // ---- self prerequisites (SPS 303 vs SPS 303D) are ignored
-  const own = await p.evaluate(() => { App.infoAll = { courses: { 'SPS 303': { prereqCodes: [['SPS 303'], ['SPS 303D'], ['MATH 101']] }, 'EE 202': { prereqCodes: [['ENS 203']] }, 'ENS 203': { prereqCodes: [] } } }; return { groups: requirementGroups('SPS 303'), opens: unlockedBy('ENS 203') }; });
+  const own = await p.evaluate(() => { const realInfo = App.info; App.info = { courses: {} }; App.infoAll = { courses: { 'SPS 303': { prereqCodes: [['SPS 303'], ['SPS 303D'], ['MATH 101']] }, 'EE 202': { prereqCodes: [['ENS 203']] }, 'ENS 203': { prereqCodes: [] } } }; const out = { groups: requirementGroups('SPS 303'), opens: unlockedBy('ENS 203') }; App.info = realInfo; return out; });   // the scraped current-term info would otherwise win over these fixtures
   check('a course is never its own prerequisite', JSON.stringify(own.groups) === '[["MATH 101"]]', JSON.stringify(own.groups));
   check('"Opens up" includes courses not offered this term (ENS 203 → EE 202)', own.opens.includes('EE 202'), JSON.stringify(own.opens));
 
@@ -170,12 +179,78 @@ async function doubleMajorTest() {
   return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;
 }
 
+async function minorsTest() {
+  const log = []; const check = (n, ok, x = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${n}${x ? ' — ' + x : ''}`);
+  const b = await chromium.launch(launchOptions());
+  const p = await (await b.newContext({ viewport: { width: 1360, height: 950 } })).newPage();
+  const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('dialog', d => d.accept());
+  await p.goto('file://' + path.resolve(root, 'dist/sumods.html')); await p.waitForSelector('#grid .tt');
+  const opts = (sel) => p.$$eval(`${sel} option`, (o) => o.map((x) => x.value).filter(Boolean));
+  const headings = async () => (await p.$$eval('#plan-body .side-head', (n) => n.map((x) => x.textContent.trim().replace(/\s+/g, ' '))));
+  await p.locator('.tabs [data-view="plan"]').click(); await p.waitForTimeout(400);
+  await p.selectOption('#plan-program', 'BSEE'); await p.waitForTimeout(300);
+  await p.selectOption('#plan-program2', 'BSMAT-DM'); await p.waitForTimeout(500);
+
+  check('minors are in neither the main nor the double-major picker',
+    !(await opts('#plan-program')).some((c) => /MINOR/.test(c)) && !(await opts('#plan-program2')).some((c) => /MINOR/.test(c)));
+  check('"Add minor" offers both minors', JSON.stringify(await opts('#plan-minor-add')) === '["PHIL-MINOR","MATH-MINOR"]', JSON.stringify(await opts('#plan-minor-add')));
+
+  await p.selectOption('#plan-minor-add', 'PHIL-MINOR'); await p.waitForTimeout(500);
+  check('the added minor shows as a chip and leaves the "Add minor" list',
+    (await p.locator('.minor-chip', { hasText: 'Philosophy minor' }).count()) === 1 && JSON.stringify(await opts('#plan-minor-add')) === '["MATH-MINOR"]',
+    JSON.stringify(await opts('#plan-minor-add')));
+  await p.selectOption('#plan-minor-add', 'MATH-MINOR'); await p.waitForTimeout(500);
+  check('with every minor added the "Add minor" picker is gone', (await p.locator('#plan-minor-add').count()) === 0);
+
+  const heads = await headings();
+  check('requirements read main programme, double major, then the minors',
+    heads.length === 4 && /\(primary\)/.test(heads[0]) && /\(double major\)/.test(heads[1]) && /Philosophy \(minor\)/.test(heads[2]) && /Mathematics \(minor\)/.test(heads[3]), JSON.stringify(heads));
+  const planText = (await p.locator('#plan-body').textContent()).replace(/\s+/g, ' ');
+  check('a minor says what it needs', /The minor needs 18 SU credits/.test(planText) && !/Graduation needs 18 SU/.test(planText));
+
+  // courses in the plan count towards a minor
+  await p.evaluate(() => { const plan = planState(); plan.terms = [{ id: '202601', courses: [{ code: 'HUM 207', grade: 'A' }, { code: 'PHIL 300' }, { code: 'PHIL 301' }, { code: 'MATH 201' }] }]; save(); renderPlanner(); });
+  await p.waitForTimeout(300);
+  const philReq = await p.evaluate(() => { const r = requirementProgress(minorPrograms()[0]); return r.map((x) => [x.group.kind, x.matches.map((m) => m.code)]); });
+  check('minor requirements are matched against the plan (required / core / spill into area)',
+    JSON.stringify(philReq) === '[["required",["HUM 207"]],["core",["PHIL 300","PHIL 301"]],["area",[]]]', JSON.stringify(philReq));
+
+  // the requirements dialog opens for a minor
+  await p.locator('[data-open-req^="m0:"]').first().click(); await p.waitForTimeout(300);
+  check('a minor\'s requirement card opens its dialog', /Philosophy/.test(await p.locator('#req-dlg-title').textContent()), await p.locator('#req-dlg-title').textContent());
+  await p.keyboard.press('Escape');
+
+  // minors never count as a programme for registration
+  const reg = await p.evaluate(() => ({ majors: activePrograms().map((x) => x.code), pair: myPrograms() }));
+  check('minors are not majors (registration days, day-one courses)', JSON.stringify(reg.majors) === '["BSEE","BSMAT-DM"]' && !reg.pair.some((c) => /PHIL|MATH/.test(c) && c.length > 4), JSON.stringify(reg));
+
+  // it survives a reload and can be removed (with undo)
+  await p.reload(); await p.waitForSelector('.tabs [data-view="plan"]');     // the app reopens on the Plan tab
+  await p.locator('.tabs [data-view="plan"]').click(); await p.waitForTimeout(500);
+  check('minors survive a reload', JSON.stringify(await p.evaluate(() => planState().minors.map((m) => m.code))) === '["PHIL-MINOR","MATH-MINOR"]');
+  await p.locator('[data-minor-remove="PHIL-MINOR"]').click(); await p.waitForTimeout(400);
+  check('removing a minor drops its chip and its requirements',
+    JSON.stringify(await p.evaluate(() => planState().minors.map((m) => m.code))) === '["MATH-MINOR"]' && !(await headings()).some((h) => /Philosophy/.test(h)), JSON.stringify(await headings()));
+  check('…and it is offered again under "Add minor"', JSON.stringify(await opts('#plan-minor-add')) === '["PHIL-MINOR"]', JSON.stringify(await opts('#plan-minor-add')));
+  await p.locator('#toast-host button', { hasText: 'Undo' }).click(); await p.waitForTimeout(400);
+  check('Undo puts it back', JSON.stringify(await p.evaluate(() => planState().minors.map((m) => m.code))) === '["PHIL-MINOR","MATH-MINOR"]');
+
+  // the course finder can filter by a minor's requirement
+  const finder = await p.evaluate(() => finderRequirementOptions());
+  check('the course finder lists minor requirements', /value="m0:0"/.test(finder) && /PHIL-MINOR · Required Courses/.test(finder));
+  check('…and filters by them', await p.evaluate(() => countsToward('PHIL 202', 'm0:0') && !countsToward('CS 201', 'm0:0')));
+  console.log(log.join('\n')); console.log('errors:', errs.length ? errs : 'none');
+  await b.close();
+  return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;
+}
+
 (async () => {
   const teardown = setup();
   let failed = 0;
   try {
     failed += await featuresTest();
     failed += await doubleMajorTest();
+    failed += await minorsTest();
   } finally {
     teardown();
   }

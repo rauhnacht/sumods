@@ -14,6 +14,7 @@ belongs to, in summary order.
 
   python scraper/programs.py                              # every programme and its -DM (double major) variant
   python scraper/programs.py --programs BSCS BSCS-DM      # BSCS as a major, and as a double major
+  python scraper/programs.py --programs PHIL-MINOR MATH-MINOR  # minors (P_PROGRAM=PHIL-MINOR), all entry terms
   python scraper/programs.py --programs BSEE BSMAT --entries 202401 202501
   python scraper/programs.py --programs BSEE --entries 202401 --dump bsee.html
   python scraper/programs.py --html bsee.html --programs BSEE --entries 202401 --print
@@ -69,6 +70,26 @@ PROGRAMS = {
 }
 DM = "-DM"        # P_PROGRAM=BSCS-DM is the double-major version of BSCS's requirements
 
+# Minors: P_PROGRAM=PHIL-MINOR. Their page has the same layout as a major's, but the course lists sit on the
+# page itself (no p_list_courses links) and there are no university / free / faculty areas.
+MINOR = "-MINOR"
+MINORS = ["ARTTC-MINOR", "BSE-MINOR", "ANALY-MINOR", "CHEM-MINOR", "CONF-MINOR", "DECB-MINOR", "ENERG-MINOR",
+          "ENTREP-MINOR", "FIN-MINOR", "GENDER-MINOR", "IS-MINOR", "MKTG-MINOR", "MATH-MINOR", "PHIL-MINOR",
+          "SCP-MINOR", "SUST-MINOR"]
+
+
+def is_minor(code: str) -> bool:
+    return code.endswith(MINOR)
+
+
+def minor_name(title: str, code: str) -> str:
+    """"PHILOSOPHY MINOR UNDERGRADUATE PROGRAM (PHIL-MINOR)" -> "Philosophy (Minor)"."""
+    t = re.sub(r"\(\s*[A-Z0-9-]+\s*\)\s*$", "", clean(title or ""))
+    t = re.sub(r"\bUNDERGRADUATE\s+PROGRAM(ME)?\b", "", t, flags=re.I)
+    t = re.sub(r"\bMINOR\b", "", t, flags=re.I)
+    t = clean(t).strip(" -–:")
+    return f"{t.title() if t.isupper() else t} (Minor)" if t else code
+
 
 # A double major is the programme code plus -DM (BSCS -> BSCS-DM), except where the university breaks the
 # pattern: Industrial Engineering is BSMS, but its double major is BSIE-DM.
@@ -87,14 +108,16 @@ def base_of(code: str) -> str:
 
 
 def programme_name(code: str) -> str:
+    if is_minor(code):
+        return code            # replaced by the page's own title once it has been read (minor_name)
     name = PROGRAMS.get(base_of(code), code)
     return f"{name} (Double Major)" if code.endswith(DM) else name
 
 
 def all_programmes() -> list[str]:
-    """Every programme, then its double-major variant — the primary ones first, so a run that
-    runs out of budget has finished the majority of students' programmes."""
-    return list(PROGRAMS) + [dm_of(code) for code in PROGRAMS]
+    """Every programme, then its double-major variant, then the minors — the primary ones first, so a run
+    that runs out of budget has finished the majority of students' programmes."""
+    return list(PROGRAMS) + [dm_of(code) for code in PROGRAMS] + MINORS
 
 
 def area_candidates(program: str, kind: str) -> list[str]:
@@ -368,6 +391,8 @@ def complete(store: dict, term: str) -> bool:
         entry = store["entries"].get(entry["sameAs"])
     if not entry or "groups" not in entry:
         return False
+    if is_minor(store.get("program", "")):
+        return True              # a minor's lists are all on its own page; nothing more to fetch
     return all(g.get("courses") or g.get("any") for g in entry["groups"]
                if g.get("kind") in ("core", "area", "free", "faculty"))
 
@@ -541,14 +566,14 @@ def summarise(data_dir: Path) -> list[str]:
         for g in entry.get("groups", []):
             by_kind.setdefault(g.get("kind"), []).append(g)
         parts = []
-        for kind in EXPECTED_KINDS:
+        for kind in ([k for k in by_kind if k != "total"] if is_minor(path.stem) else EXPECTED_KINDS):
             gs = by_kind.get(kind)
             if not gs:
                 parts.append(f"{kind}=MISSING")
                 continue
             n = sum(len(g.get("courses") or []) for g in gs)
             parts.append(f"{kind}={n}" + ("" if n or any(g.get("any") for g in gs) else " EMPTY"))
-        extra = [k for k in by_kind if k not in EXPECTED_KINDS and k != "total"]
+        extra = [] if is_minor(path.stem) else [k for k in by_kind if k not in EXPECTED_KINDS and k != "total"]
         lines.append(f"{path.stem:10} {term}  " + "  ".join(parts) + (f"  (+{','.join(extra)})" if extra else "")
                      + f"  [{len(entries)} entry terms]")
     return lines
@@ -682,6 +707,8 @@ def main(argv=None) -> int:
                 hashes.setdefault(digest({k: v for k, v in e.items() if k != "source"}), t)
         recent = set(sorted(entries, reverse=True)[:2])     # this year's cohorts can still change
         is_dm = program.endswith(DM)
+        minor = is_minor(program)
+        sparse = is_dm or minor                              # these exist only for some entry terms
         misses = 0                                           # consecutive entry terms with no page
         for entry_term in entries:
             if time.monotonic() > deadline:
@@ -693,12 +720,12 @@ def main(argv=None) -> int:
             url = URL.format(term=entry_term, program=program)
             print(f"{program} {entry_term}")
             try:
-                res = (probe if is_dm else session).get(url, timeout=60)
+                res = (probe if sparse else session).get(url, timeout=60)
                 res.raise_for_status()
             except Exception as exc:
                 print(f"  failed: {'no such programme page' if '500' in str(exc) else exc}", file=sys.stderr)
                 misses += 1
-                if is_dm and misses >= 3:
+                if sparse and misses >= 3:
                     print(f"  {program}: nothing for {misses} entry terms in a row — leaving the older ones")
                     break
                 continue
@@ -710,12 +737,15 @@ def main(argv=None) -> int:
             if not parsed["groups"]:
                 print("  no requirements on that page (programme not open to that entry term?)")
                 misses += 1
-                if is_dm and misses >= 3:
+                if sparse and misses >= 3:
                     print(f"  {program}: nothing for {misses} entry terms in a row — leaving the older ones")
                     break
                 continue
             misses = 0
-            if not args.no_areas:
+            if minor:
+                # the lists are on the page; an empty "Faculty Courses" footnote group isn't an area of a minor
+                parsed["groups"] = [g for g in parsed["groups"] if g["courses"] or g["kind"] != "faculty"]
+            if not args.no_areas and not minor:
                 fill_area_courses(probe, entry_term, program, parsed["groups"], args.delay,
                                   parsed.get("links"))
                 if is_dm:
@@ -726,7 +756,7 @@ def main(argv=None) -> int:
                      "totalCredits": parsed["totalCredits"], "totalEcts": parsed["totalEcts"], "source": url}
             put_entry(store, hashes, entry_term, entry)
             if parsed["title"] and store["name"] == program:
-                store["name"] = parsed["title"]
+                store["name"] = minor_name(parsed["title"], program) if minor else parsed["title"]
             print(f"  {len(parsed['groups'])} areas, {sum(len(g['courses']) for g in parsed['groups'])} courses")
             time.sleep(args.delay)
         store["updated"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

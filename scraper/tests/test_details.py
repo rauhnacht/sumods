@@ -287,7 +287,7 @@ def test_double_major_programmes():
     # Industrial Engineering breaks the pattern: BSMS, but its double major is BSIE-DM (not BSMS-DM)
     assert programs.dm_of("BSMS") == "BSIE-DM" and programs.dm_of("BSCS") == "BSCS-DM"
     assert programs.base_of("BSIE-DM") == "BSMS" and "BSIE-DM" in programs.all_programmes()
-    assert "BSMS-DM" not in programs.all_programmes() and programs.all_programmes()[-12:].count("BSIE-DM") == 1
+    assert "BSMS-DM" not in programs.all_programmes() and programs.all_programmes()[:-len(programs.MINORS)][-12:].count("BSIE-DM") == 1
     assert programs.programme_name("BSIE-DM") == "Industrial Engineering (Double Major)"
     assert programs.programme_name("BSCS-DM") == "Computer Science and Engineering (Double Major)"
     assert "P_PROGRAM=BSCS-DM&" in programs.URL.format(term="202601", program="BSCS-DM")
@@ -529,6 +529,66 @@ def test_rerunning_never_wipes_stored_entries():
         assert core("202401") == ["CS 301"] and core("202301") == ["CS 301"], third           # older cohorts keep the old content
         assert all("sameAs" in e or "groups" in e for e in third.values())
         assert all(e.get("sameAs") != t for t, e in third.items())                           # nothing points at itself
+    finally:
+        programs.make_session, programs.make_probe_session, programs.time.sleep = real
+
+
+def test_minor_programme_page():
+    """A minor (P_PROGRAM=PHIL-MINOR): required + core + area lists sit on the page itself, there is no
+    university / free area, and the stray "Faculty Courses" footnote is not an area."""
+    import programs
+    assert programs.is_minor("PHIL-MINOR") and not programs.is_minor("BSEE-DM")
+    assert programs.MINORS[-1] == "SUST-MINOR" and len(programs.MINORS) == 16
+    assert programs.all_programmes()[-16:] == programs.MINORS          # minors come after every major and its double major
+    assert programs.minor_name("PHILOSOPHY MINOR UNDERGRADUATE PROGRAM (PHIL-MINOR)", "PHIL-MINOR") == "Philosophy (Minor)"
+    assert programs.minor_name("", "PHIL-MINOR") == "PHIL-MINOR"
+    parsed = programs.parse_page((HERE / "fixture_minor_phil.html").read_text(encoding="utf-8"))
+    by_kind = {g["kind"]: g for g in parsed["groups"]}
+    assert by_kind["required"]["courses"] == ["HUM 207", "PHIL 202"], by_kind["required"]
+    assert by_kind["required"]["credits"] == 6 and by_kind["required"]["minCourses"] == 2
+    assert len(by_kind["core"]["courses"]) == 11 and by_kind["core"]["credits"] == 6
+    assert len(by_kind["area"]["courses"]) == 3
+    assert parsed["totalCredits"] == 18 and not parsed["links"]
+    assert not by_kind["faculty"]["courses"]                             # the scraper drops this empty group for minors
+
+
+def test_minor_is_scraped_without_area_fetches_and_stays_complete():
+    import contextlib
+    import io
+    import json
+    import tempfile
+    import programs
+    data = Path(tempfile.mkdtemp())
+    (data / "terms.json").write_text(json.dumps({"terms": [{"code": "202601"}]}))
+    html = (HERE / "fixture_minor_phil.html").read_text(encoding="utf-8")
+    asked = []
+
+    class S:
+        def get(self, url, timeout=None, headers=None):
+            asked.append(url)
+            # a minor that exists only for the newest cohorts: older entry terms answer with a 500, and three in a row stop it
+            return _Resp(html) if "P_TERM=2026" in url or "P_TERM=2025" in url else _Resp("", 500)
+
+    real = (programs.make_session, programs.make_probe_session, programs.time.sleep)
+    programs.make_session = programs.make_probe_session = lambda: S()
+    programs.time.sleep = lambda x: None
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            programs.main(["--data", str(data), "--delay", "0", "--programs", "PHIL-MINOR",
+                           "--entries", "202602", "202601", "202502", "202501", "202402", "202401", "202302", "202301"])
+        store = json.loads((data / "programs" / "PHIL-MINOR.json").read_text())
+        assert store["name"] == "Philosophy (Minor)", store["name"]
+        assert set(store["entries"]) == {"202602", "202601", "202502", "202501"}, list(store["entries"])   # older cohorts had no page
+        newest = store["entries"]["202602"]                          # 202601 .. 202501 are identical, so they point at it
+        assert [g["kind"] for g in newest["groups"]] == ["required", "core", "area"], newest["groups"]
+        assert newest["totalCredits"] == 18
+        assert not [u for u in asked if "p_list_courses" in u]           # nothing to fetch: the lists are on the page
+        assert not [u for u in asked if "202301" in u]                    # stopped after three misses in a row
+        assert programs.complete(store, "202601")
+        idx = json.loads((data / "programs" / "index.json").read_text())["programs"]
+        assert [p["code"] for p in idx] == ["PHIL-MINOR"]
+        line = [l for l in programs.summarise(data) if l.startswith("PHIL-MINOR")][0]
+        assert "MISSING" not in line and "required=2" in line and "core=11" in line, line
     finally:
         programs.make_session, programs.make_probe_session, programs.time.sleep = real
 

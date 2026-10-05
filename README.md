@@ -44,7 +44,8 @@ scraper/seats.py     seat availability per CRN
   future): courses per term, credits and term GPA, editable grades, a running CGPA, a warning
   when something sits before its prerequisite or in a term it isn't usually offered in, and
   progress against the programme's requirement groups. Pick a **double major** alongside the
-  primary programme and both track independently, side by side. Click a requirement card to
+  primary programme and both track independently, side by side. **Minors** are added with "+ Add minor"
+  (any number, removable with the ✕) and sit below the main programme and the double major. Click a requirement card to
   see exactly which of your courses filled it — and, when a course is standing in for another
   under a transitional rule, what it's counted in place of. Programmes come from
   `data/programs/`; `data/programs/overrides.json` holds hand-maintained corrections (like an
@@ -354,6 +355,18 @@ Deleting it from the plan sticks while it stays in the timetable.
 Industrial Engineering is `BSMS`, but its double major is `BSIE-DM`. The mapping lives in `DM_CODES` in
 `scraper/programs.py` and `DM_OF` in `app.js`; a programme that breaks the pattern shows up in the log as
 "nothing for 3 entry terms in a row" and gets one line in each.
+
+**Minors.** `P_PROGRAM=PHIL-MINOR` and the other 15 `*-MINOR` codes (`MINORS` in `scraper/programs.py`) are scraped
+like the majors, for every entry term since 2019, into `data/programs/<CODE>.json`. A minor's page lists its
+required / core / area courses inline, so no `p_list_courses` calls are made (and an empty "Faculty Courses" footnote
+is dropped); the name comes from the page title ("Philosophy (Minor)"). Like a double major, a minor that doesn't
+exist for old entry terms stops after 3 misses in a row. In the app a minor is *not* a programme the student is
+enrolled in for registration: `plan.minors` is kept apart from `plan.program`/`program2`, `activePrograms()` never
+returns one, and they get no registration-day or day-one handling. Core electives beyond the minimum spill into
+area electives, as the page says. Run them with Actions → "Update course descriptions" → `programs` =
+`ARTTC-MINOR BSE-MINOR ANALY-MINOR CHEM-MINOR CONF-MINOR DECB-MINOR ENERG-MINOR ENTREP-MINOR FIN-MINOR GENDER-MINOR IS-MINOR MKTG-MINOR MATH-MINOR PHIL-MINOR SCP-MINOR SUST-MINOR`
+(the Sunday run does them anyway, after the majors). Check with `python3 scraper/programs.py --summary`.
+The saved page `phil.html` (copy: `scraper/tests/fixture_minor_phil.html`) is the test fixture.
 
 **Double-major lists.** A double major's core, area and free electives are exactly its major's: BSMAT-DM uses
 BSMAT's lists, taken for the same entry term, while the credit targets still come from the `-DM` page. The

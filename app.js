@@ -1693,6 +1693,7 @@ function nextTerm(id) {
 function planState() {
   const plan = store.plan || (store.plan = { program: null, terms: [] });
   if (!plan.terms) plan.terms = [];
+  if (!Array.isArray(plan.minors)) plan.minors = [];     // [{ code: 'PHIL-MINOR', entry: '202601' }]
   if (plan.sem) {                       // migrate the old year/semester grid
     const base = Number((App.index?.terms?.[0]?.code || '202601').slice(0, 4)) - (plan.years || 4) + 1;
     Object.entries(plan.sem).forEach(([key, codes]) => {
@@ -1842,6 +1843,9 @@ function planIssues(termId, course) {
  * about the first (primary) one; use activePrograms() for double-major-aware logic. */
 const currentProgram = () => (App.requirements && App.requirements[0]) || null;
 const activePrograms = () => App.requirements || [];
+const minorPrograms = () => App.minorRequirements || [];
+/** 'p1' / 'p2' are the main programme and the double major; 'm0', 'm1'… are the minors, in Plan order. */
+const programForSlot = (slot) => (/^m\d+$/.test(slot) ? minorPrograms()[Number(slot.slice(1))] : activePrograms()[slot === 'p1' ? 0 : 1]);
 
 async function refreshRequirements() {
   const plan = planState();
@@ -1864,6 +1868,11 @@ async function refreshRequirements() {
     if (req && !plan[e] && req.entry !== 'any') plan[e] = req.entry;
   });
   App.requirements = results.filter(Boolean);
+  // minors are kept apart from the majors: nothing that reads activePrograms() (registration days, day-one
+  // courses) should ever treat them as a programme the student is enrolled in
+  const minorResults = await Promise.all(plan.minors.map((m) => loadRequirements(m.code, m.entry)));
+  plan.minors.forEach((m, i) => { if (minorResults[i] && !m.entry && minorResults[i].entry !== 'any') m.entry = minorResults[i].entry; });
+  App.minorRequirements = minorResults.filter(Boolean);
   if (store.view === 'plan') renderPlanner();
   if (store.view === 'timetable') render();
 }
@@ -2043,6 +2052,9 @@ function suggestedTermId() {
 
 /** The double-major version of a programme's requirements (BSCS-DM), if it has been scraped. */
 const isDM = (code) => /-DM$/.test(code || '');
+/** A minor (PHIL-MINOR…). It sits below the main programme and the double major in the Plan, has no registration-day
+ * priority of its own, and any number of them can be added. */
+const isMinor = (code) => /-MINOR$/.test(code || '');
 // A double major's code is the programme's plus -DM (BSCS -> BSCS-DM), except Industrial Engineering:
 // BSMS, whose double major is BSIE-DM.
 const DM_OF = { BSMS: 'BSIE-DM' };
@@ -2059,7 +2071,7 @@ const programForSubject = (subject) => Object.keys(PROGRAM_SUBJECT).find((k) => 
  * programme. Otherwise list the normal programmes, never the one picked as the double major. */
 function programSelectOptions(selectedCode, excludeCode, double = false) {
   return ['<option value="">—</option>'].concat((App.programs || [])
-    .filter((p) => (double ? isDM(p.code) : !isDM(p.code)) && baseCode(p.code) !== baseCode(excludeCode))
+    .filter((p) => !isMinor(p.code) && (double ? isDM(p.code) : !isDM(p.code)) && baseCode(p.code) !== baseCode(excludeCode))
     .map((p) => `<option value="${esc(p.code)}"${p.code === selectedCode ? ' selected' : ''}>${esc(p.name)}${p.legacy ? '' : ` (${esc(p.code)})`}</option>`)).join('');
 }
 
@@ -2077,7 +2089,7 @@ function requirementBlockHTML(program, slot) {
   const progress = requirementProgress(program);
   return `
     ${program.example ? '<p class="banner" style="margin-bottom:10px">Example programme data — replace data/programs.json with your own.</p>' : ''}
-    ${program.totalCredits ? `<p class="cat-sub">Graduation needs ${esc(program.totalCredits)} SU credits${program.totalEcts ? ` and ${esc(program.totalEcts)} ECTS` : ''}${program.entry && program.entry !== 'any' ? ` for students who entered in ${esc(termLabel(program.entry))}` : ''}.</p>` : ''}
+    ${program.totalCredits ? `<p class="cat-sub">${isMinor(program.code) ? 'The minor needs' : 'Graduation needs'} ${esc(program.totalCredits)} SU credits${program.totalEcts ? ` and ${esc(program.totalEcts)} ECTS` : ''}${program.entry && program.entry !== 'any' ? ` for students who entered in ${esc(termLabel(program.entry))}` : ''}.</p>` : ''}
     ${(program.notes || []).map((n) => `<p class="cat-sub">${esc(n)}</p>`).join('')}
     <div class="req-grid">${progress.map(({ group, matches, doneCredits, earned: got, target, targetCount, missing, ects, unit, rules }, i) => {
       const parts = [];
@@ -2126,7 +2138,7 @@ function bestSlotStatus(slot) {
 const REQ_STATUS_LABEL = { taken: 'Taken', planned: 'Planned', failed: 'Not counted', open: 'Not taken' };
 
 function openRequirementsDialog(slot, groupIndex) {
-  const program = activePrograms()[slot === 'p1' ? 0 : 1];
+  const program = programForSlot(slot);
   if (!program) return;
   App.reqDialog = { slot, groupIndex };
   renderRequirementsDialog();
@@ -2136,7 +2148,7 @@ function openRequirementsDialog(slot, groupIndex) {
 function renderRequirementsDialog() {
   if (!App.reqDialog) return;
   const { slot, groupIndex } = App.reqDialog;
-  const program = activePrograms()[slot === 'p1' ? 0 : 1];
+  const program = programForSlot(slot);
   if (!program) { $('#dlg-requirements').close(); return; }
   const progress = requirementProgress(program);
   const gi = Math.max(0, Math.min(groupIndex, progress.length - 1));
@@ -2228,11 +2240,25 @@ function renderPlanner() {
     `<span class="stat"><b>${planned.length}</b> course${planned.length === 1 ? '' : 's'} planned</span>`,
   ].filter(Boolean).join('');
 
-  const reqHTML = programs.length
-    ? programs.map((program, i) => `
-        ${programs.length > 1 ? `<h3 class="side-head" style="margin-top:${i ? '18px' : '0'}">${esc(program.name.replace(/\s*\(Double Major\)$/i, ''))}${i === 0 ? ' (primary)' : ' (double major)'}</h3>` : ''}
-        ${requirementBlockHTML(program, i === 0 ? 'p1' : 'p2')}`).join('')
+  const minors = minorPrograms();
+  const majorsHTML = programs.map((program, i) => `
+        ${programs.length > 1 || minors.length ? `<h3 class="side-head" style="margin-top:${i ? '18px' : '0'}">${esc(program.name.replace(/\s*\(Double Major\)$/i, ''))}${i === 0 ? ' (primary)' : ' (double major)'}</h3>` : ''}
+        ${requirementBlockHTML(program, i === 0 ? 'p1' : 'p2')}`).join('');
+  const minorsHTML = minors.map((program, i) => `
+        <h3 class="side-head" style="margin-top:${programs.length || i ? '18px' : '0'}">${esc(program.name.replace(/\s*\(Minor\)$/i, ''))} (minor)</h3>
+        ${requirementBlockHTML(program, `m${i}`)}`).join('');
+  const reqHTML = programs.length || minors.length
+    ? majorsHTML + minorsHTML
     : '<p class="empty-note">No programme loaded. Put a curriculum in data/programs.json (tools/import_program.py builds one) to track requirements.</p>';
+  const minorChoices = (App.programs || []).filter((p) => isMinor(p.code) && !plan.minors.some((m) => m.code === p.code));
+  const minorsBar = `${plan.minors.map((m) => {
+    const listed = (App.programs || []).find((p) => p.code === m.code);
+    const entries = entrySelectOptions(m.code, (minors.find((r) => r.code === m.code) || {}).entry || m.entry);
+    return `<span class="minor-chip"><b>${esc(listed ? listed.name.replace(/\s*\(Minor\)$/i, '') : m.code)} minor</b>
+      ${entries ? `<select class="select" data-minor-entry="${esc(m.code)}" aria-label="Entry term for ${esc(m.code)}">${entries}</select>` : ''}
+      <button type="button" class="sem-x" data-minor-remove="${esc(m.code)}" aria-label="Remove ${esc(m.code)}">✕</button></span>`;
+  }).join('')}${minorChoices.length ? `<label class="reg-pick"><select class="select" id="plan-minor-add" aria-label="Add minor">
+      <option value="">+ Add minor</option>${minorChoices.map((p) => `<option value="${esc(p.code)}">${esc(p.name.replace(/\s*\(Minor\)$/i, ''))}</option>`).join('')}</select></label>` : ''}`;
 
   host.innerHTML = `
     <div class="filters">
@@ -2252,6 +2278,7 @@ function renderPlanner() {
               `<option value="${v}"${v === plan.manualStanding ? ' selected' : ''}>${label}</option>`).join('')}
           </select></label>`;
       })()}
+      ${minorsBar}
       <button class="btn" type="button" id="plan-import">Import transcript</button>
       ${currentProgram() && currentProgram().suggested ? '<button class="btn" type="button" id="plan-fill">Fill suggested plan</button>' : ''}
       <button class="btn quiet" type="button" id="plan-clear">Clear plan</button>
@@ -2533,7 +2560,7 @@ function applyTranscript() {
     }
   }
   // pick the programme(s) and entry term(s) the transcript points to, if nothing is chosen yet
-  const matchProgram = (name) => App.programs && App.programs.filter((p) => !isDM(p.code)).find((p) => {
+  const matchProgram = (name) => App.programs && App.programs.filter((p) => !isDM(p.code) && !isMinor(p.code)).find((p) => {
     const wanted = fold(name);
     return fold(p.name).includes(wanted) || wanted.includes(fold(p.name));
   });
@@ -3337,13 +3364,18 @@ function finderRequirementOptions() {
     if (g.kind === 'total') return;
     out.push(`<option value="${pi}:${gi}">${esc(program.code || program.name)} · ${esc(g.name)}</option>`);
   }));
+  minorPrograms().forEach((program, mi) => (program.groups || []).forEach((g, gi) => {
+    if (g.kind === 'total') return;
+    out.push(`<option value="m${mi}:${gi}">${esc(program.code || program.name)} · ${esc(g.name)}</option>`);
+  }));
   return out.join('');
 }
 
 function countsToward(code, pick) {
   if (!pick) return true;
-  const [pi, gi] = pick.split(':').map(Number);
-  const group = ((activePrograms()[pi] || {}).groups || [])[gi];
+  const [which, gIndex] = pick.split(':');
+  const gi = Number(gIndex);
+  const group = ((programForSlot(/^m/.test(which) ? which : which === '0' ? 'p1' : 'p2') || {}).groups || [])[gi];
   if (!group) return true;
   if (group.kind === 'engineering' || group.kind === 'basicscience') {
     return ((courseInfo(code) || {})[group.kind === 'engineering' ? 'eng' : 'bs'] || 0) > 0;
@@ -4097,6 +4129,16 @@ function bindEvents() {
     if (pick) { addToTerm(App.addingTo || id, pick.dataset.pick); return; }
     const remove = e.target.closest('[data-remove]');
     if (remove && id) { removeFromTerm(id, remove.dataset.remove); return; }
+    const dropMinor = e.target.closest('[data-minor-remove]');
+    if (dropMinor) {
+      const plan = planState();
+      const before = JSON.stringify(plan.minors);
+      plan.minors = plan.minors.filter((m) => m.code !== dropMinor.dataset.minorRemove);
+      save();
+      refreshRequirements();
+      toast('Minor removed', { action: 'Undo', onAction: () => { planState().minors = JSON.parse(before); save(); refreshRequirements(); } });
+      return;
+    }
     const dropTerm = e.target.closest('[data-drop-term]');
     if (dropTerm) {
       const plan = planState();
@@ -4149,6 +4191,21 @@ function bindEvents() {
       render();
     }
     if (e.target.id === 'plan-entry2') { planState().entry2 = e.target.value; save(); refreshRequirements(); }
+    if (e.target.id === 'plan-minor-add') {
+      const plan = planState();
+      const code = e.target.value;
+      if (code && !plan.minors.some((m) => m.code === code)) {
+        plan.minors.push({ code, entry: plan.entry || (plan.terms[0] ? plan.terms[0].id : null) });
+        save();
+        refreshRequirements();
+      }
+      return;
+    }
+    if (e.target.dataset.minorEntry) {
+      const m = planState().minors.find((x) => x.code === e.target.dataset.minorEntry);
+      if (m) { m.entry = e.target.value; save(); refreshRequirements(); }
+      return;
+    }
     if (e.target.id === 'plan-standing') { planState().manualStanding = e.target.value || null; save(); renderPlanner(); }
     const grade = e.target.closest('[data-grade]');
     if (grade) {
