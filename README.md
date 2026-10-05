@@ -372,7 +372,7 @@ from the academic calendar. It was written from how MGM's service is described, 
 `python3 scraper/weather.py --probe` once and check the printed JSON. A failed run keeps the old file; a forecast
 older than three days isn't shown.
 
-**Minors.** `P_PROGRAM=PHIL-MINOR` and the other 15 `*-MINOR` codes (`MINORS` in `scraper/programs.py`) are scraped
+**Minors.** `P_PROGRAM=PHIL-MINOR` and the other 16 `*-MINOR` codes (`MINORS` in `scraper/programs.py`) are scraped
 like the majors, for every entry term since 2019, into `data/programs/<CODE>.json`. A minor's page lists its
 required / core / area courses inline, so no `p_list_courses` calls are made (and an empty "Faculty Courses" footnote
 is dropped); the name comes from the page title ("Philosophy (Minor)"). Like a double major, a minor that doesn't
@@ -380,7 +380,7 @@ exist for old entry terms stops after 3 misses in a row. In the app a minor is *
 enrolled in for registration: `plan.minors` is kept apart from `plan.program`/`program2`, `activePrograms()` never
 returns one, and they get no registration-day or day-one handling. Core electives beyond the minimum spill into
 area electives, as the page says. Run them with Actions → "Update course descriptions" → `programs` =
-`ARTTC-MINOR BSE-MINOR ANALY-MINOR CHEM-MINOR CONF-MINOR DECB-MINOR ENERG-MINOR ENTREP-MINOR FIN-MINOR GENDER-MINOR IS-MINOR MKTG-MINOR MATH-MINOR PHIL-MINOR SCP-MINOR SUST-MINOR`
+`ARTTC-MINOR BSE-MINOR ANALY-MINOR CHEM-MINOR CONF-MINOR DECB-MINOR ENERG-MINOR ENTREP-MINOR FIN-MINOR GENDER-MINOR IS-MINOR MKTG-MINOR MATH-MINOR PHIL-MINOR PHYS-MINOR SCP-MINOR SUST-MINOR`
 (the Sunday run does them anyway, after the majors). Check with `python3 scraper/programs.py --summary`.
 The saved page `phil.html` (copy: `scraper/tests/fixture_minor_phil.html`) is the test fixture.
 

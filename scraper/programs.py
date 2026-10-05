@@ -76,7 +76,7 @@ DM = "-DM"        # P_PROGRAM=BSCS-DM is the double-major version of BSCS's requ
 MINOR = "-MINOR"
 MINORS = ["ARTTC-MINOR", "BSE-MINOR", "ANALY-MINOR", "CHEM-MINOR", "CONF-MINOR", "DECB-MINOR", "ENERG-MINOR",
           "ENTREP-MINOR", "FIN-MINOR", "GENDER-MINOR", "IS-MINOR", "MKTG-MINOR", "MATH-MINOR", "PHIL-MINOR",
-          "SCP-MINOR", "SUST-MINOR"]
+          "PHYS-MINOR", "SCP-MINOR", "SUST-MINOR"]
 
 
 def is_minor(code: str) -> bool:
@@ -125,6 +125,8 @@ def area_candidates(program: str, kind: str) -> list[str]:
     """Spellings to try for a programme's own electives. A double major tries BSCS-DM_CEL and
     then BSCS_CEL (always with P_PROGRAM=BSCS-DM); the standard suffix goes before the legacy one."""
     prefixes = [program] if program == base_of(program) else [program, base_of(program)]
+    if is_minor(program):
+        prefixes = [program[: -len(MINOR)], program]      # MKTG-MINOR's electives are MKTG_AEL (P_PROGRAM stays MKTG-MINOR)
     return [f"{prefix}_{suffix}" for suffix in AREA_SUFFIXES[kind] for prefix in prefixes]
 
 
@@ -784,6 +786,11 @@ def main(argv=None) -> int:
             if minor:
                 # the lists are on the page; an empty "Faculty Courses" footnote group isn't an area of a minor
                 parsed["groups"] = [g for g in parsed["groups"] if g["courses"] or g["kind"] != "faculty"]
+            if not args.no_areas and minor:
+                # the lists are normally on the page; an area that came back empty (MKTG, ENTREP) has its own list page
+                empty = [g for g in parsed["groups"] if g["kind"] in AREA_SUFFIX and not g["courses"]]
+                if empty:
+                    fill_area_courses(probe, entry_term, program, empty, args.delay, parsed.get("links"))
             if not args.no_areas and not minor:
                 fill_area_courses(probe, entry_term, program, parsed["groups"], args.delay,
                                   parsed.get("links"))
