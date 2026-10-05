@@ -179,6 +179,99 @@ async function doubleMajorTest() {
   return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;
 }
 
+/* Today tab: the next days as compact cards, weekend collapsed, holidays, MGM weather chips. */
+async function todayTest() {
+  const log = []; const check = (n, ok, x = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${n}${x ? ' — ' + x : ''}`);
+  const b = await chromium.launch(launchOptions());
+  const p = await (await b.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+  const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.goto('file://' + path.resolve(root, 'dist/sumods.html')); await p.waitForSelector('#grid .tt');
+  for (const c of ['CS 201', 'EE 311', 'MATH 201']) {
+    await p.fill('#search', c); await p.waitForTimeout(140);
+    const h = p.locator(`#search-results [data-code="${c}"]`).first(); if (await h.count()) { await h.click(); await p.waitForTimeout(150); }
+  }
+  const setup = (opts) => p.evaluate((o) => {
+    const today = istanbulToday();
+    const iso = (n) => addDaysISO(today, n);
+    App.weather = o.stale ? { updated: new Date(Date.now() - 5 * 86400e3).toISOString(), days: [{ date: today, min: 1, max: 2, code: 'sun', text: 'Clear' }] }
+      : { updated: new Date().toISOString(), days: [
+        { date: iso(0), min: 14, max: 21, code: 'partly', text: 'Partly cloudy' }, { date: iso(1), min: 13, max: 19, code: 'storm', text: 'Thunderstorms' },
+        { date: iso(2), min: 12, max: 18, code: 'rain', text: 'Rain' }, { date: iso(6), min: 9, max: 15, code: 'snow', text: 'Snow' }] };
+    App.calendar = { name: 'Test term', classesStart: iso(-30), classesEnd: iso(60), holidays: [{ date: iso(2), name: 'Test Bayramı' }] };
+    App.todayDays = o.days || 7;
+    store.view = 'today'; renderToday();
+    return { today, hol: iso(2) };
+  }, opts);
+  await p.locator('[data-view="today"]:visible').first().click(); await p.waitForTimeout(300);          // the bottom bar on a phone
+  const info = await setup({});
+  const cards = await p.$$eval('#today-body .day-card', (n) => n.map((x) => ({ title: x.querySelector('h3').textContent, date: x.querySelector('.day-date').textContent, quiet: x.classList.contains('quiet'), text: x.textContent.replace(/\s+/g, ' ') })));
+  check('Today lists the next days as cards (a weekend counts as one)', cards.length >= 5 && cards.length <= 7, JSON.stringify(cards.map((c) => c.title)));
+  check('the first two cards are "Today" and "Tomorrow"', cards[0].title === 'Today' && cards[1].title === 'Tomorrow');
+  check('at most one "Weekend" card, and only for two quiet days', cards.filter((c) => c.title === 'Weekend').length <= 1 && cards.filter((c) => c.title === 'Weekend').every((c) => / – /.test(c.date)), JSON.stringify(cards.map((c) => c.title)));
+  const holiday = cards.find((c) => /Test Bayramı/.test(c.text));
+  check('a holiday shows its name and no classes', !!holiday && /Holiday · Test Bayramı/.test(holiday.text) && !(await p.locator('#today-body .day-card', { hasText: 'Test Bayramı' }).locator('.today-row').count()));
+  check('weather chips show the high and low with an icon', await p.locator('#today-body .day-card').first().locator('.day-wx svg').count() === 1 && /21°\s*14°/.test(cards[0].text), cards[0].text);
+  check('…and a day with no forecast shows none', (await p.locator('#today-body .day-wx').count()) <= 4);
+  const rows = await p.locator('#today-body .today-row').count();
+  check('class rows are listed under their days', rows >= 1, `${rows} rows`);
+  check('days with nothing say so in one line', cards.some((c) => c.quiet && /No classes|Weekend|Holiday/.test(c.text)));
+  await p.locator('#today-more').click(); await p.waitForTimeout(200);
+  check('"Show the next 7 days" extends the list', (await p.locator('#today-body .day-card').count()) > cards.length);
+  await setup({ stale: true });
+  check('a forecast older than three days is not shown', (await p.locator('#today-body .day-wx').count()) === 0);
+  const wide = await p.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+  check('nothing scrolls sideways on a phone', wide);
+  console.log(log.join('\n')); console.log('errors:', errs.length ? errs : 'none');
+  await b.close();
+  return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;
+}
+
+/* "or" rules from data/programs/overrides.json: MATH 212 vs MATH 201 + 202 (by entry term), and EE core credits from EE 4xx.
+ * Runs the real overrides over a made-up BSEE page, so it doesn't depend on what has been scraped. */
+async function rulesTest() {
+  const log = []; const check = (n, ok, x = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${n}${x ? ' — ' + x : ''}`);
+  const b = await chromium.launch(launchOptions());
+  const p = await (await b.newContext({ viewport: { width: 1360, height: 950 } })).newPage();
+  const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.goto('file://' + path.resolve(root, 'dist/sumods.html')); await p.waitForSelector('#grid .tt');
+  const run = (entry, taken, opts = {}) => p.evaluate(async ([entry, taken, opts]) => {
+    const overrides = await loadOverrides();
+    const credits = { 'EE 311': [6, 3], 'EE 411': [6, 3], 'EE 412': [6, 3], 'EE 413': [6, 3], 'MATH 212': [7, 4], 'MATH 201': [6, 3], 'MATH 202': [6, 3] };
+    const page = { groups: [
+      { name: 'Required Courses', kind: 'required', credits: 33, minCourses: 4, courses: opts.noMath ? ['EE 201'] : ['EE 201', 'MATH 201', 'MATH 202', 'MATH 212'] },
+      { name: 'Core Electives', kind: 'core', credits: 12, courses: ['EE 311', 'EE 411', 'EE 412', 'EE 413'] }] };
+    const patched = applyOverrides(page, opts.program || 'BSEE', entry, overrides);
+    planState().terms = [{ id: '202601', courses: taken.map((code) => ({ code, grade: 'A' })) }];
+    const req = requirementProgress({ ...patched, credits });
+    const out = {};
+    req.forEach((r) => { out[r.group.kind] = (r.rules || []).map((x) => `${x.met ? 'met' : x.planned ? 'planned' : 'open'}:${x.label}`); });
+    return { rules: out, notes: patched.notes || [] };
+  }, [entry, taken, opts]);
+
+  let r = await run('202402', ['MATH 201']);
+  check('entered ≤ Spring 2024-25: "MATH 212, or MATH 201 + MATH 202" is open with only MATH 201', JSON.stringify(r.rules.required) === '["open:MATH 212, or MATH 201 + MATH 202"]', JSON.stringify(r.rules.required));
+  check('…and carries its note', r.notes.length === 1 && /isn't required if you take MATH 201 and MATH 202/.test(r.notes[0]), JSON.stringify(r.notes));
+  r = await run('202402', ['MATH 201', 'MATH 202']);
+  check('…MATH 201 + MATH 202 satisfy it without MATH 212', JSON.stringify(r.rules.required) === '["met:MATH 212, or MATH 201 + MATH 202"]', JSON.stringify(r.rules.required));
+  r = await run('202402', ['MATH 212']);
+  check('…and so does MATH 212 alone', JSON.stringify(r.rules.required) === '["met:MATH 212, or MATH 201 + MATH 202"]');
+  r = await run('202501', ['MATH 201', 'MATH 202']);
+  check('entered Fall 2025 or later: MATH 201 + 202 no longer replace MATH 212', JSON.stringify(r.rules.required) === '["open:MATH 212 is required"]', JSON.stringify(r.rules.required));
+  r = await run('202501', ['MATH 212']);
+  check('…and MATH 212 meets it', JSON.stringify(r.rules.required) === '["met:MATH 212 is required"]' && r.notes.length === 1, JSON.stringify(r));
+  r = await run('202402', [], { noMath: true });
+  check('a programme that doesn\'t list MATH 212 gets neither the rule nor the note', !(r.rules.required || []).length && !r.notes.length, JSON.stringify(r));
+  r = await run('202602', ['EE 311', 'EE 411']);
+  check('EE core: 9 credits from EE 4xx — 3/9 so far (EE 311 doesn\'t count)', JSON.stringify(r.rules.core) === '["planned:At least 9 credits from EE 4xx courses — 3/9 cr"]', JSON.stringify(r.rules.core));
+  r = await run('202602', ['EE 411', 'EE 412', 'EE 413']);
+  check('…met with three EE 4xx courses', JSON.stringify(r.rules.core) === '["met:At least 9 credits from EE 4xx courses — 9/9 cr"]', JSON.stringify(r.rules.core));
+  r = await run('202602', ['EE 411', 'EE 412', 'EE 413'], { program: 'BSCS' });
+  check('…and it is an EE-only rule', !(r.rules.core || []).length, JSON.stringify(r.rules.core));
+  console.log(log.join('\n')); console.log('errors:', errs.length ? errs : 'none');
+  await b.close();
+  return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;
+}
+
 async function minorsTest() {
   const log = []; const check = (n, ok, x = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${n}${x ? ' — ' + x : ''}`);
   const b = await chromium.launch(launchOptions());
@@ -251,6 +344,8 @@ async function minorsTest() {
     failed += await featuresTest();
     failed += await doubleMajorTest();
     failed += await minorsTest();
+    failed += await rulesTest();
+    failed += await todayTest();
   } finally {
     teardown();
   }

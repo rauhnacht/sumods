@@ -187,11 +187,25 @@ function applyOverrides(entry, code, entryTerm, overrides) {
     const group = groups.find((g) => g.name === o.group || g.kind === o.group);
     if (!group) continue;
     if (o.rules) group.rules.push(...o.rules);          // e.g. "one HUM 2xx course"
-    if (o.replace && group.courses) {
-      const i = group.courses.findIndex((slot) => slotCodes(slot).includes(o.replace));
-      if (i !== -1) group.courses[i] = o.with;
+    let applies = true;
+    if (o.replace) {
+      const i = group.courses ? group.courses.findIndex((slot) => slotCodes(slot).includes(o.replace)) : -1;
+      if (i !== -1) group.courses[i] = o.with; else applies = false;      // a programme/entry that doesn't list it gets no note either
     }
-    if (o.note) notes.push(o.note);
+    // "MATH 212, or MATH 201 + MATH 202" / "MATH 212 is required": rules over the programme's own required list. They only
+    // apply when the programme actually lists the course, so a programme without MATH 212 gets neither the rule nor the note.
+    if (o.alt || o.must) {
+      const listed = flatCourseCodes(group.courses);
+      const slot = (o.alt || {}).course || o.must;
+      const by = o.alt ? o.alt.orAll.filter((c) => listed.includes(c)) : [];
+      applies = listed.includes(slot) && (!o.alt || by.length > 0);
+      if (applies) {
+        group.rules.push(o.alt
+          ? { label: `${slot}, or ${by.join(' + ')}`, anyOf: [[slot], by] }
+          : { label: `${slot} is required`, anyOf: [[slot]] });
+      }
+    }
+    if (o.note && applies) notes.push(o.note);
   }
   return { ...entry, groups, notes: [...(entry.notes || []), ...notes] };
 }
@@ -1554,7 +1568,7 @@ function ectsOf(code) {
   const info = courseInfo(code);
   if (info && info.ects) return info.ects;
   const program = currentProgram();
-  if (program && program.credits && program.credits[code] && program.credits[code][1]) return program.credits[code][1];
+  if (program && program.credits && program.credits[code] && program.credits[code][0]) return program.credits[code][0];   // [ECTS, SU]
   const planned = store.plan && (store.plan.terms || []).flatMap((t) => t.courses).find((c) => c.code === code && c.ects);
   return planned ? planned.ects : null;
 }
@@ -1894,8 +1908,8 @@ function requirementProgress(program) {
   const creditMap = program.credits || {};
   const coreCodes = new Set((program.groups || []).filter((g) => g.kind === 'core').flatMap((g) => flatCourseCodes(g.courses)));
   const used = new Set();
-  const creditsOf = (course, group) => course.credits ?? (creditMap[course.code] || [])[0] ?? group.creditsEach ?? 3;
-  const ectsOf = (course) => course.ects ?? (creditMap[course.code] || [])[1] ?? null;
+  const creditsOf = (course, group) => course.credits ?? (creditMap[course.code] || [])[1] ?? group.creditsEach ?? 3;   // the page lists [ECTS, SU]
+  const ectsOf = (course) => course.ects ?? (creditMap[course.code] || [])[0] ?? null;
   const passed = (course) => !(course.grade && FAILING_GRADES.includes(course.grade));
 
   const accepts = (group, course) => {
@@ -1922,11 +1936,27 @@ function requirementProgress(program) {
   const OVERLAY = new Set(['faculty', 'basicscience', 'engineering']);
   const groups = (program.groups || []).filter((g) => g.kind !== 'total');
   const results = new Map();
-  const ruleStatus = (group) => (group.rules || []).map((rule) => {
+  // `minCredits`: the rule is about credits, not a course count (EE core: 9 credits from EE 4xx courses);
+  // `within: 'group'`: only courses that were assigned to this very group count towards it
+  const ruleStatus = (group, assigned) => (group.rules || []).map((rule) => {
+    if (rule.anyOf) {
+      // "MATH 212, or MATH 201 + MATH 202": met when every course of one alternative is taken (planned: in the plan)
+      const have = (list, onlyTaken) => list.every((code) => planned.some((c) => passed(c) && c.code === code && (!onlyTaken || c.grade)));
+      return { ...rule, taken: Number(rule.anyOf.some((alt) => have(alt, true))), planned: rule.anyOf.some((alt) => have(alt, false)),
+        met: rule.anyOf.some((alt) => have(alt, true)), codes: [...new Set(rule.anyOf.flat())].filter((code) => planned.some((c) => c.code === code)) };
+    }
     let re;
     try { re = new RegExp(rule.match); } catch { return null; }
-    const hits = planned.filter((c) => passed(c) && re.test(c.code));
+    const pool = rule.within === 'group' && assigned ? assigned : planned;
+    const hits = pool.filter((c) => passed(c) && re.test(c.code));
     const taken = hits.filter((c) => c.grade);
+    const weigh = (list) => list.reduce((n, c) => n + (c.credits ?? creditsOf(c, group)), 0);
+    if (rule.minCredits) {
+      const have = Math.round(weigh(taken) * 10) / 10;
+      const planCr = Math.round(weigh(hits) * 10) / 10;
+      return { ...rule, label: `${rule.label} — ${have}/${rule.minCredits} cr`, taken: taken.length, planned: planCr > 0,
+        met: have >= rule.minCredits, codes: hits.map((c) => c.code) };
+    }
     return { ...rule, taken: taken.length, planned: hits.length, met: taken.length >= (rule.min || 1),
       codes: hits.map((c) => c.code) };
   }).filter(Boolean);
@@ -2017,7 +2047,7 @@ function requirementProgress(program) {
       target: group.credits || null,
       targetCount: group.minCourses || group.choose || (group.courses && !group.credits ? group.courses.length : null),
       missing,
-      rules: ruleStatus(group),
+      rules: ruleStatus(group, matches),
     };
   }
 }
@@ -2110,6 +2140,7 @@ function requirementBlockHTML(program, slot) {
         <div class="bar"><span style="width:${Math.round(ratio * 100)}%"></span>
           ${earnedRatio ? `<i style="width:${Math.round(earnedRatio * 100)}%"></i>` : ''}</div>
         ${missing.length && missing.length <= 8 ? `<p class="req-missing">Left: ${missing.map((c) => esc(c)).join(', ')}</p>` : ''}
+        ${group.note ? `<p class="req-note-line">${esc(group.note)}</p>` : ''}
         ${(rules || []).map((r) => `<p class="req-rule ${r.met ? 'met' : r.planned ? 'planned' : ''}">${r.met ? '✓' : r.planned ? '◐' : '○'} ${esc(r.label)}</p>`).join('')}
       </button>`;
     }).join('')}</div>`;
@@ -2169,7 +2200,7 @@ function renderRequirementsDialog() {
 
   const creditsMap = program.credits || {};
   const creditsBadge = (codes) => {
-    const known = codes.map((c) => (creditsMap[c] || [])[0]).find((v) => v !== undefined) ?? group.creditsEach;
+    const known = codes.map((c) => (creditsMap[c] || [])[1]).find((v) => v !== undefined) ?? group.creditsEach;   // [ECTS, SU]
     return known !== undefined ? `${known} SU` : '';
   };
   const shareKey = group.kind === 'engineering' ? 'eng' : group.kind === 'basicscience' ? 'bs' : null;
@@ -2209,6 +2240,7 @@ function renderRequirementsDialog() {
 
   $('#req-dlg-body').innerHTML = `
     <p class="cat-sub">${esc(parts.join(', ') || `${matches.length} courses`)}</p>
+    ${group.note ? `<p class="cat-sub req-note">${esc(group.note)}</p>` : ''}
     ${group.borrowed ? `<p class="cat-sub">This list is the ${esc(group.borrowed)} major's — a separate double-major list isn't published, so the same courses are assumed to count.</p>` : ''}
     <div class="bar req-pool-bar"><span style="width:${Math.round(ratio * 100)}%"></span>
       ${earnedRatio ? `<i style="width:${Math.round(earnedRatio * 100)}%"></i>` : ''}</div>
@@ -2580,16 +2612,76 @@ function applyTranscript() {
   toast(`${parsed.courses} courses imported${progNote}`);
 }
 
-/* --------------------------------------------------------------- today view */
+/* ------------------------------------------------------------ weather (MGM, scraper/weather.py) */
+
+const WX_CLOUD = '<path d="M7 16.5a4 4 0 01-.6-7.95A5.5 5.5 0 0117 7.7a4.7 4.7 0 01.4 8.8z"/>';
+const WX_ICONS = {
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>',
+  partly: '<circle cx="8" cy="8" r="2.7"/><path d="M8 2.2v1.3M2.2 8h1.3M3.9 3.9l.9.9M12.1 3.9l-.9.9"/><path d="M9.5 20.5a3.6 3.6 0 01-.5-7.2 4.8 4.8 0 019.2 1.3 3.1 3.1 0 01-.7 5.9z"/>',
+  cloud: WX_CLOUD,
+  rain: `${WX_CLOUD}<path d="M8 19l-1 2.6M12.5 19l-1 2.6M17 19l-1 2.6"/>`,
+  storm: `${WX_CLOUD}<path d="M12.7 17.2l-2.3 3.2h3.1l-2 3.2"/>`,
+  snow: `${WX_CLOUD}<path d="M8 20v.01M12 21.8v.01M16 20v.01M10 23v.01M14 23v.01"/>`,
+  fog: '<path d="M4 8h16M3 12h18M5 16h14M8 20h8"/>',
+  wind: '<path d="M3 9h10.5a2.6 2.6 0 10-2.6-2.6M3 13h14.5a2.6 2.6 0 11-2.6 2.6M3 17h7"/>',
+};
+const wxIcon = (name) => `<svg class="wx-ico" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${WX_ICONS[name] || WX_ICONS.cloud}</svg>`;
+
+async function loadWeather() {
+  if (App.weather !== undefined) return App.weather;
+  if (window.SUMODS_DATA) { App.weather = window.SUMODS_DATA.weather || null; return App.weather; }
+  App.weather = await fetchJSON('data/weather.json').catch(() => null);
+  return App.weather;
+}
+
+/** The forecast for one date (YYYY-MM-DD), unless the file is more than three days old. */
+function weatherFor(iso) {
+  const w = App.weather;
+  if (!w || !Array.isArray(w.days)) return null;
+  if (w.updated && Date.now() - Date.parse(w.updated) > 3 * 86400e3) return null;
+  return w.days.find((d) => d.date === iso) || null;
+}
+
+const wxChip = (iso) => {
+  const w = weatherFor(iso);
+  if (!w) return '';
+  const t = (n) => (n === null || n === undefined ? '' : `${n}°`);
+  return `<span class="day-wx" title="${esc(w.text || '')}">${wxIcon(w.code)}${t(w.max) ? `<b>${t(w.max)}</b>` : ''}${t(w.min) ? `<small>${t(w.min)}</small>` : ''}</span>`;
+};
+
+/* -------------------------------------------------------------------- today */
+
+const addDaysISO = (iso, n) => new Date(Date.parse(`${iso}T12:00:00Z`) + n * 86400e3).toISOString().slice(0, 10);
+const weekdayOf = (iso) => (new Date(`${iso}T12:00:00Z`).getUTCDay() + 6) % 7;      // Monday = 0, like DAYS
+const dayLabel = (iso, weekday = true) => {
+  const d = new Date(`${iso}T12:00:00Z`);
+  return `${weekday ? `${DAYS[weekdayOf(iso)]} ` : ''}${d.getUTCDate()} ${d.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' })}`;
+};
+
+/** What a given date holds: the weekly classes (not on a holiday or outside the term's class dates), your own events,
+ * and any finals that fall on it. */
+function dayPlan(iso, all, finals) {
+  const cal = App.calendar;
+  const holiday = ((cal && cal.holidays) || []).find((h) => h.date === iso) || null;
+  const inTerm = !cal || !cal.classesStart || !cal.classesEnd || (iso >= cal.classesStart && iso <= cal.classesEnd);
+  const wd = weekdayOf(iso);
+  const blocks = all.filter((b) => b.day === wd && (b.kind === 'custom' || (!holiday && inTerm)))
+    .sort((a, b) => a.start - b.start);
+  const exams = finals.filter(({ exam }) => exam.date === iso);
+  return { iso, wd, holiday, inTerm, blocks, exams, empty: !blocks.length && !holiday && !exams.length };
+}
 
 function renderToday() {
   const host = $('#today-body');
   if (!host) return;
+  if (App.weather === undefined) loadWeather().then(() => { if (store.view === 'today') renderToday(); });
   const now = istanbulNow();
+  const todayISO = istanbulToday();
   const all = planBlocks();
-  const today = all.filter((b) => b.day === now.day).sort((a, b) => a.start - b.start);
-  const dateLine = new Date(`${istanbulToday()}T12:00:00`)
-    .toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  const finals = App.exams ? examPlan().rows : [];
+  const count = App.todayDays || 7;
+  const plans = Array.from({ length: count }, (_, i) => dayPlan(addDaysISO(todayISO, i), all, finals));
 
   const status = (b) => {
     if (now.min >= b.end) return { label: 'done', cls: 'past' };
@@ -2597,39 +2689,54 @@ function renderToday() {
     const wait = b.start - now.min;
     return { label: wait < 90 ? `in ${durText(wait)}` : `at ${hhmm(b.start)}`, cls: '' };
   };
+  const classRow = (b, live) => {
+    const s = live ? status(b) : { label: '', cls: '' };
+    return `<div class="today-row ${s.cls}">
+      <span class="today-time">${esc(hhmm(b.start))}<small>${esc(hhmm(b.end))}</small></span>
+      <span class="today-main">
+        <span class="today-code c${b.color}">${esc(b.code)}${b.group && b.group !== '0' ? ` ${esc(b.group)}` : ''}</span>
+        ${b.where ? `<span class="today-where">${esc(b.where)}</span>` : ''}
+      </span>
+      <span class="today-status">${esc(s.label)}</span>
+    </div>`;
+  };
+  const examRow = ({ exam, sec }) => `<div class="today-row exam">
+    <span class="today-time">${exam.start !== null && exam.start !== undefined ? esc(hhmm(exam.start)) : '—'}<small>exam</small></span>
+    <span class="today-main"><span class="today-code c${(entry(sec.course.code) || {}).color || 0}">${esc(sec.course.code)}</span>
+      <span class="today-where">${esc(exam.place || (exam.start === null || exam.start === undefined ? 'time in BannerWeb' : ''))}</span></span>
+    <span class="today-status"></span></div>`;
 
-  let next = null;
-  if (!today.some((b) => b.end > now.min)) {
-    for (let step = 1; step <= 7 && !next; step += 1) {
-      const day = (now.day + step) % 7;
-      const candidates = all.filter((b) => b.day === day).sort((a, b) => a.start - b.start);
-      if (candidates.length) next = { block: candidates[0], day };
+  const cards = [];
+  for (let i = 0; i < plans.length; i += 1) {
+    const d = plans[i];
+    const title = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : DAYS_FULL[d.wd];
+    // Saturday + Sunday with nothing on either: one quiet "Weekend" card
+    const next = plans[i + 1];
+    if (d.wd === 5 && next && next.wd === 6 && d.empty && next.empty) {
+      cards.push(`<section class="day-card quiet"><header class="day-head"><h3>Weekend</h3><span class="day-date">${esc(dayLabel(d.iso))} – ${esc(dayLabel(next.iso))}</span>
+        <span class="day-wxs">${wxChip(d.iso)}${wxChip(next.iso)}</span></header></section>`);
+      i += 1;
+      continue;
     }
+    const cal = App.calendar;
+    let body;
+    if (d.holiday) {
+      body = `<p class="day-note holiday">Holiday · ${esc(d.holiday.name)}</p>`;
+    } else if (d.empty) {
+      body = `<p class="day-note">${d.inTerm || !cal ? 'No classes' : `No classes — ${esc(cal.name || 'this term')} runs ${esc(fmtDate(cal.classesStart))} – ${esc(fmtDate(cal.classesEnd))}`}</p>`;
+    } else {
+      body = '';
+    }
+    cards.push(`<section class="day-card${i === 0 ? ' is-today' : ''}${d.empty || d.holiday ? ' quiet' : ''}">
+      <header class="day-head"><h3>${esc(title)}</h3><span class="day-date">${esc(dayLabel(d.iso, i < 2))}</span>${wxChip(d.iso) ? `<span class="day-wxs">${wxChip(d.iso)}</span>` : ''}</header>
+      ${d.blocks.map((b) => classRow(b, i === 0)).join('')}${d.exams.map(examRow).join('')}${body}
+    </section>`);
   }
 
-  const finals = App.exams
-    ? examPlan().rows.filter(({ exam }) => exam.date === istanbulToday())
-    : [];
-
   host.innerHTML = `
-    <p class="today-date">${esc(dateLine)}</p>
-    ${today.length ? today.map((b) => {
-      const s = status(b);
-      return `<div class="today-row ${s.cls}">
-        <span class="today-time">${esc(hhmm(b.start))}<small>${esc(hhmm(b.end))}</small></span>
-        <span class="today-main">
-          <span class="today-code c${b.color}">${esc(b.code)}${b.group && b.group !== '0' ? ` ${esc(b.group)}` : ''}</span>
-          <span class="today-where">${esc(b.where || 'room not listed')}</span>
-        </span>
-        <span class="today-status">${esc(s.label)}</span>
-      </div>`;
-    }).join('')
-    : `<p class="empty-note">${tt().order.length ? 'No classes today.' : 'Add courses in the Timetable tab and today\'s classes show up here.'}</p>`}
-    ${next ? `<p class="cat-sub">Next up: ${esc(next.block.code)} on ${esc(DAYS_FULL[next.day])} at ${esc(hhmm(next.block.start))}${next.block.where ? `, ${esc(next.block.where)}` : ''}.</p>` : ''}
-    ${finals.length ? `<h3 class="side-head" style="margin-top:18px">Exam today</h3>${finals.map(({ exam, sec }) =>
-      `<div class="final-row"><span class="final-code c${(entry(sec.course.code) || {}).color || 0}">${esc(sec.course.code)}</span>
-       <span>${exam.start !== null && exam.start !== undefined ? esc(hhmm(exam.start)) : 'time in BannerWeb'}</span>
-       <span class="final-where">${esc(exam.place || '')}</span></div>`).join('')}` : ''}`;
+    ${tt().order.length || customEvents().length ? '' : '<p class="empty-note">Add courses in the Timetable tab and your classes show up here, day by day.</p>'}
+    ${cards.join('')}
+    ${count < 28 ? '<button type="button" class="btn quiet" id="today-more">Show the next 7 days</button>' : ''}`;
 }
 
 /* --------------------------------------------------------------- rooms view */
@@ -4114,6 +4221,9 @@ function bindEvents() {
   });
 
   // planner
+  $('#today-body').addEventListener('click', (e) => {
+    if (e.target.id === 'today-more') { App.todayDays = (App.todayDays || 7) + 7; renderToday(); }
+  });
   $('#plan-body').addEventListener('click', (e) => {
     const openReq = e.target.closest('[data-open-req]');
     if (openReq) {

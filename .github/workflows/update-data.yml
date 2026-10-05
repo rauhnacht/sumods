@@ -39,6 +39,10 @@ jobs:
         continue-on-error: true
         run: python -u scraper/academic_calendar.py
 
+      - name: Weather forecast for the campus (MGM)
+        continue-on-error: true   # a failed run keeps the previous data/weather.json
+        run: python -u scraper/weather.py
+
       - name: Course catalogue across the archive
         run: python tools/build_catalog.py
 

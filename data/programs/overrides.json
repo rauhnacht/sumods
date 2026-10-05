@@ -42,6 +42,42 @@
      "min": 1
     }
    ]
+  },
+  {
+   "program": "*",
+   "group": "required",
+   "entries": {
+    "to": "202402"
+   },
+   "alt": {
+    "course": "MATH 212",
+    "orAll": [
+     "MATH 201",
+     "MATH 202"
+    ]
+   },
+   "note": "Entered up to Spring 2024-2025: MATH 212 isn't required if you take MATH 201 and MATH 202 instead (whichever of the two your programme lists)."
+  },
+  {
+   "program": "*",
+   "group": "required",
+   "entries": {
+    "from": "202501"
+   },
+   "must": "MATH 212",
+   "note": "Entered Fall 2025-2026 or later: MATH 212 is required (MATH 201 and MATH 202 no longer replace it)."
+  },
+  {
+   "program": "BSEE",
+   "group": "core",
+   "rules": [
+    {
+     "label": "At least 9 credits from EE 4xx courses",
+     "match": "^EE 4\\d\\d$",
+     "minCredits": 9,
+     "within": "group"
+    }
+   ]
   }
  ]
 }

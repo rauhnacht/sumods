@@ -356,6 +356,22 @@ Industrial Engineering is `BSMS`, but its double major is `BSIE-DM`. The mapping
 `scraper/programs.py` and `DM_OF` in `app.js`; a programme that breaks the pattern shows up in the log as
 "nothing for 3 entry terms in a row" and gets one line in each.
 
+**Rule notes and "or" rules.** The sentence under each area's heading on a degree page ("Minimum 6 credits must be
+taken from list…") is stored as `note` on that group and shown on its card and in its dialog; `python3
+scraper/programs.py --notes` lists all of them from the stored data (older entry terms get theirs on a run with
+`refresh`). What the course lists can't say goes into `data/programs/overrides.json`: `rules` (a regex `match`, a
+course count `min` or a credit total `minCredits`, `within: "group"` to count only what landed in that area),
+`alt` ("MATH 212, or MATH 201 + MATH 202" — `{"course", "orAll"}`), `must` (the course is required) and `replace`
+(an either/or slot). `alt`/`must`/`replace` apply, and add their note, only when the programme lists the course.
+Currently: MATH 212 vs 201 + 202 up to entry 202402, MATH 212 required from 202501, EE core credits from EE 4xx,
+and the EE 321 / CS 303 teach-out. The course-credit table in a programme file is `[ECTS, SU]` (the page's column order).
+
+**Weather.** `scraper/weather.py` writes `data/weather.json` (MGM's daily forecast for Tuzla, run by "Update course
+data") and the Today tab shows the next 7 days as compact cards with the forecast, a collapsed weekend and holidays
+from the academic calendar. It was written from how MGM's service is described, not from a live answer: run
+`python3 scraper/weather.py --probe` once and check the printed JSON. A failed run keeps the old file; a forecast
+older than three days isn't shown.
+
 **Minors.** `P_PROGRAM=PHIL-MINOR` and the other 15 `*-MINOR` codes (`MINORS` in `scraper/programs.py`) are scraped
 like the majors, for every entry term since 2019, into `data/programs/<CODE>.json`. A minor's page lists its
 required / core / area courses inline, so no `p_list_courses` calls are made (and an empty "Faculty Courses" footnote

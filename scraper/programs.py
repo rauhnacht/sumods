@@ -14,6 +14,7 @@ belongs to, in summary order.
 
   python scraper/programs.py                              # every programme and its -DM (double major) variant
   python scraper/programs.py --programs BSCS BSCS-DM      # BSCS as a major, and as a double major
+  python scraper/programs.py --notes                      # the rule sentences under each area, from the stored data
   python scraper/programs.py --programs PHIL-MINOR MATH-MINOR  # minors (P_PROGRAM=PHIL-MINOR), all entry terms
   python scraper/programs.py --programs BSEE BSMAT --entries 202401 202501
   python scraper/programs.py --programs BSEE --entries 202401 --dump bsee.html
@@ -338,6 +339,14 @@ def parse_page(html: str) -> dict:
             if id(node) in seen_rows:
                 continue
             seen_rows.add(id(node))
+            if "t_kategori_row_desc" in (node.get("class") or []):
+                # the sentence under an area's heading ("Minimum 6 credits must be taken from list… At least 9
+                # credits from EE 4XX…"): the rules the course lists alone don't show
+                if current:
+                    text = clean(node.get_text(" ")).strip(" :")
+                    if text:
+                        groups[current]["note"] = text
+                continue
             cells = [clean(c.get_text(" ")) for c in node.find_all(["th", "td"])]
             if not cells:
                 continue
@@ -579,6 +588,31 @@ def summarise(data_dir: Path) -> list[str]:
     return lines
 
 
+def notes_report(data_dir: Path) -> list[str]:
+    """Every sentence the degree pages put under an area's heading, per programme, for the newest entry term
+    and again for each older one that differs. For finding rules the course lists don't carry (credits that
+    must come from EE 4xx, "one of these two", …). Needs no network."""
+    lines = []
+    for path in sorted((data_dir / "programs").glob("*.json")):
+        if path.stem in ("index", "overrides"):
+            continue
+        entries = json.loads(path.read_text(encoding="utf-8")).get("entries", {})
+        seen: dict[str, list[str]] = {}
+        for term in sorted(entries, reverse=True):
+            entry = entries[term]
+            for _ in range(20):
+                if "sameAs" not in entry:
+                    break
+                entry = entries[entry["sameAs"]]
+            for g in entry.get("groups", []):
+                if g.get("note"):
+                    seen.setdefault(f"{g['name']}: {g['note']}", []).append(term)
+        for text, terms in seen.items():
+            span = terms[0] if len(terms) == 1 else f"{terms[-1]}–{terms[0]}"
+            lines.append(f"{path.stem:10} {span:14} {text}")
+    return lines
+
+
 def probe(program: str, term: str) -> list[str]:
     """Look at one programme's live pages and say what's there: the groups and summary rows read,
     every area link found (and how), and for each area which spellings the server answers and how
@@ -644,12 +678,17 @@ def main(argv=None) -> int:
     ap.add_argument("--print", action="store_true", help="show what was parsed, write nothing")
     ap.add_argument("--summary", action="store_true",
                     help="list what data/programs/ holds per programme (no network) and stop")
+    ap.add_argument("--notes", action="store_true",
+                    help="list the note sentences stored under each area (no network) and stop")
     ap.add_argument("--probe", action="store_true",
                     help="query --programs at --entries and report what the pages contain (writes nothing)")
     args = ap.parse_args(argv)
 
     if args.summary:
         print("\n".join(summarise(Path(args.data))))
+        return 0
+    if args.notes:
+        print("\n".join(notes_report(Path(args.data))))
         return 0
     if args.probe:
         targets = args.programs if "--programs" in (argv or sys.argv) else ["BSCS"]

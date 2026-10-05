@@ -124,6 +124,7 @@ a { color: var(--accent); }
 .tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
 .tabs button:hover { color: var(--ink); }
 
+.topbar-right .select { max-width: 40vw; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
 .select {
@@ -462,19 +463,34 @@ main { padding: 14px max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-a
 :root[data-theme="dark"] .sem-row.warn, :root:not([data-theme="light"]) .sem-row.warn,
 :root[data-theme="dark"] .sem-issue, :root:not([data-theme="light"]) .sem-issue { color: #ffc766; }
 
-.today-card { padding: 16px 16px 18px; max-width: 720px; }
-.today-date { font-size: 15px; font-weight: 700; margin: 0 0 12px; letter-spacing: -.01em; }
-.today-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--rule); }
-.today-row:first-of-type { border-top: 0; }
-.today-time { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
-.today-time small { display: block; font-weight: 400; font-size: 12px; color: var(--ink-3); }
-.today-main { display: grid; gap: 2px; min-width: 0; }
-.today-code { font-weight: 700; font-stretch: 84%; justify-self: start; background: var(--bg); color: var(--fg); border-radius: 6px; padding: 1px 7px; }
+/* Today: the next days as compact cards (phone first). One header line per day, classes beneath, quiet days collapse to a line. */
+.today-days { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; max-width: 720px; }
+.day-card { min-width: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 14px 6px; }
+.day-card.is-today { border-color: color-mix(in srgb, var(--accent) 45%, var(--rule)); }
+.day-card.quiet { padding-bottom: 10px; }
+.day-head { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; row-gap: 2px; min-width: 0; }
+.day-head h3 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+.day-card.is-today .day-head h3 { color: var(--accent); }
+.day-date { color: var(--ink-3); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.day-wxs { margin-left: auto; display: inline-flex; gap: 10px; align-self: center; }
+.day-wx { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.day-wx b { font-size: 14px; color: var(--ink); }
+.day-wx small { font-size: 12px; color: var(--ink-3); }
+.wx-ico { flex: none; }
+.day-note { margin: 4px 0 2px; font-size: 13px; color: var(--ink-3); }
+.day-note.holiday { color: var(--accent); font-weight: 600; }
+.today-row { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 0; border-top: 1px solid var(--rule); }
+.day-head + .today-row { margin-top: 6px; }
+.today-time { font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.today-time small { display: block; font-weight: 400; font-size: 11.5px; color: var(--ink-3); }
+.today-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.today-code { font-weight: 700; font-stretch: 84%; background: var(--bg); color: var(--fg); border-radius: 6px; padding: 1px 7px; }
 .today-where { color: var(--ink-3); font-size: 12.5px; }
-.today-status { font-size: 12.5px; color: var(--ink-3); font-weight: 600; }
+.today-status { font-size: 12.5px; color: var(--ink-3); font-weight: 600; white-space: nowrap; }
 .today-row.past { opacity: .5; }
 .today-row.live .today-status { color: var(--accent); }
-.today-row.live { background: var(--accent-soft); border-radius: 9px; padding-left: 10px; padding-right: 10px; }
+.today-row.live { background: var(--accent-soft); border-radius: 9px; padding-left: 8px; padding-right: 8px; margin: 0 -8px; }
+#today-more { justify-self: start; }
 
 .blk.custom { background-image: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--fg) 9%, transparent) 7px 9px); }
 .events-list { display: grid; gap: 6px; margin-bottom: 12px; }
@@ -710,3 +726,6 @@ footer a { color: inherit; }
 /* in the catalog but not in this term's schedule */
 .pg-node.offterm rect { opacity: .55; stroke-dasharray: 3 2; }
 .pg-node.offterm text { opacity: .7; }
+
+/* a rule sentence from the degree page, under a requirement card (two lines; the dialog shows all of it) */
+.req-note-line { margin: 6px 0 0; font-size: 12px; color: var(--ink-3); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

@@ -42,6 +42,8 @@ def main():
         "programOverrides": program_overrides,
         "approval": json.loads((ROOT / "data" / "special-approval.json").read_text(encoding="utf-8"))
                     if (ROOT / "data" / "special-approval.json").exists() else None,
+        "weather": json.loads((ROOT / "data" / "weather.json").read_text(encoding="utf-8"))
+                   if (ROOT / "data" / "weather.json").exists() else None,
         "infoAll": json.loads((ROOT / "data" / "info-all.json").read_text(encoding="utf-8"))
                    if (ROOT / "data" / "info-all.json").exists() else None,
         "catalog": json.loads(catalog_path.read_text(encoding="utf-8")) if catalog_path.exists() else None,

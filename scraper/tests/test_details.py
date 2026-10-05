@@ -549,6 +549,9 @@ def test_minor_programme_page():
     assert len(by_kind["core"]["courses"]) == 11 and by_kind["core"]["credits"] == 6
     assert len(by_kind["area"]["courses"]) == 3
     assert parsed["totalCredits"] == 18 and not parsed["links"]
+    assert by_kind["core"]["note"].startswith("Minimum 6 credits must be taken from list"), by_kind["core"]
+    assert "directly counted towards Area Elective" in by_kind["core"]["note"]
+    assert "note" not in by_kind["required"]                              # an empty description row adds nothing
     assert not by_kind["faculty"]["courses"]                             # the scraper drops this empty group for minors
 
 
@@ -591,6 +594,53 @@ def test_minor_is_scraped_without_area_fetches_and_stays_complete():
         assert "MISSING" not in line and "required=2" in line and "core=11" in line, line
     finally:
         programs.make_session, programs.make_probe_session, programs.time.sleep = real
+
+
+def test_weather_forecast_parsing():
+    """MGM's daily forecast: Gun1..GunN keys, dates as UTC timestamps. The response below is MADE UP from how the service is
+    described (no live call has been checked yet — see the note in weather.py), so this pins the parser, not the service."""
+    import contextlib
+    import io
+    import json
+    import tempfile
+    import weather
+    row = {"istNo": 17130,
+           "tarihGun1": "2026-10-06T00:00:00.000Z", "enDusukGun1": 15, "enYuksekGun1": 21, "enDusukNemGun1": 50, "enYuksekNemGun1": 90, "hadiseGun1": "PB",
+           "tarihGun2": "2026-10-07T00:00:00.000Z", "enDusukGun2": 14.6, "enYuksekGun2": 19, "hadiseGun2": "GSY",
+           "tarihGun3": "2026-10-07T21:00:00.000Z", "enDusukGun3": -9999, "enYuksekGun3": 18, "hadiseGun3": "ZZ",
+           "tarihGun5": "2026-10-10T00:00:00.000Z", "enDusukGun5": 12, "enYuksekGun5": 17, "hadiseGun5": "HY"}
+    days = weather.parse_daily([row])
+    assert [d["date"] for d in days] == ["2026-10-06", "2026-10-07", "2026-10-08", "2026-10-10"], days     # 21:00Z is already the next day in Istanbul
+    assert (days[0]["min"], days[0]["max"], days[0]["code"]) == (15, 21, "partly"), days[0]               # humidity keys don't pass for temperatures
+    assert (days[1]["min"], days[1]["code"]) == (15, "storm")                                             # 14.6 rounds
+    assert days[2]["min"] is None and days[2]["code"] == "cloud" and days[2]["event"] == "ZZ"             # no value, unknown event
+    assert days[3]["code"] == "rain"
+    assert weather.station_number([{"il": "İstanbul", "gunlukTahminIstNo": 17130, "saatlikTahminIstNo": 99}]) == 17130
+    assert weather.station_number([{"x": 1}]) is None and weather.parse_daily([]) == [] and weather.parse_daily("oops") == []
+
+    class S:
+        def get(self, url, headers=None, timeout=None):
+            assert headers["Origin"] == "https://www.mgm.gov.tr"
+            class R:
+                def raise_for_status(self): pass
+                def json(self_inner): return [{"gunlukTahminIstNo": 17130}] if "merkezler" in url else [row]
+            return R()
+
+    import scrape
+    real_session = scrape.make_session
+    scrape.make_session = lambda: S()
+    try:
+        data = Path(tempfile.mkdtemp())
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert weather.main(["--data", str(data)]) == 0
+        saved = json.loads((data / "weather.json").read_text(encoding="utf-8"))
+        assert saved["ilce"] == "Tuzla" and len(saved["days"]) == 4 and saved["updated"].endswith("Z")
+        scrape.make_session = lambda: type("Bad", (), {"get": lambda self, *a, **k: (_ for _ in ()).throw(Exception("403"))})()
+        with contextlib.redirect_stderr(io.StringIO()):
+            assert weather.main(["--data", str(data)]) == 0                     # a failed run keeps the old file
+        assert json.loads((data / "weather.json").read_text(encoding="utf-8")) == saved
+    finally:
+        scrape.make_session = real_session
 
 
 def test_primary_instructor_comes_first():
