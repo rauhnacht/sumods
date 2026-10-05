@@ -361,10 +361,10 @@ taken from list…") is stored as `note` on that group and shown on its card and
 scraper/programs.py --notes` lists all of them from the stored data (older entry terms get theirs on a run with
 `refresh`). What the course lists can't say goes into `data/programs/overrides.json`: `rules` (a regex `match`, a
 course count `min` or a credit total `minCredits`, `within: "group"` to count only what landed in that area),
-`alt` ("MATH 212, or MATH 201 + MATH 202" — `{"course", "orAll"}`), `must` (the course is required) and `replace`
+`alt` ("MATH 212, or MATH 201 + MATH 202" — `{"course", "orAll"}`), `must` (the course is required), `pick` (`{"courses", "n"}`: the courses stay listed but only n of them are required — ECON's MATH 201/202/203/212) and `replace`
 (an either/or slot). `alt`/`must`/`replace` apply, and add their note, only when the programme lists the course.
 Currently: MATH 212 vs 201 + 202 up to entry 202402, MATH 212 required from 202501, EE core credits from EE 4xx,
-and the EE 321 / CS 303 teach-out. The course-credit table in a programme file is `[ECTS, SU]` (the page's column order).
+the ECON pick-one math set, and the EE 321 / CS 303 teach-out. The course-credit table in a programme file is `[ECTS, SU]` (the page's column order).
 
 **Weather.** `scraper/weather.py` writes `data/weather.json` (MGM's daily forecast for Tuzla, run by "Update course
 data") and the Today tab shows the next 7 days as compact cards with the forecast, a collapsed weekend and holidays
