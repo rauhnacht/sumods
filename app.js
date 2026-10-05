@@ -3441,12 +3441,31 @@ function timetableColumnsSVG() {
       const tw = w - 8;
       out.push(`<rect x="${x}" y="${y}" width="${w - 2}" height="${h}" rx="5" fill="${token(`--c${b.color}-bg`, '#d9e6ff')}" stroke="${token(`--c${b.color}-edge`, '#a8c4f7')}" stroke-width=".8"/>`);
       const code = `${b.code}${b.group && b.group !== '0' ? ` ${b.group}` : ''}`;
-      out.push(`<text x="${x + 4}" y="${y + 11.5}" font-size="9.5" font-weight="700" fill="${fg}">${esc(fit(code, tw, 9.5))}</text>`);
-      if (b.where && h >= 28) out.push(`<text x="${x + 4}" y="${y + 22.5}" font-size="8.5" fill="${fg}" opacity=".85">${esc(fit(b.where, tw, 8.5))}</text>`);
+      const lines = fitLines(code, b.where || '', w - 7, h - 4);
+      lines.items.forEach((ln, i) => {
+        out.push(`<text x="${x + 4}" y="${y + 3 + lines.size * (i + 0.9) + i * 1.5}" font-size="${lines.size}" ${ln.bold ? 'font-weight="700" ' : 'opacity=".85" '}fill="${fg}">${esc(ln.text)}</text>`);
+      });
     }
   });
   out.push('</svg>');
   return out.join('');
+}
+
+/** Text for a small block: the course code (bold) and its room, always both. Tries the two-line form first and
+ * breaks into one word per line (EE / 321 / FENS / L035) when the block is narrow; the font shrinks to fit. */
+function fitLines(code, room, width, height) {
+  const words = (t) => String(t).split(/\s+/).filter(Boolean);
+  const forms = [
+    [{ text: code, bold: true }, ...(room ? [{ text: room }] : [])],
+    [...words(code).map((text) => ({ text, bold: true })), ...words(room).map((text) => ({ text }))],
+  ];
+  for (let size = 9.5; size >= 6; size -= 0.5) {
+    for (const items of forms) {
+      const wide = Math.max(...items.map((ln) => ln.text.length * size * (ln.bold ? 0.68 : 0.6)));
+      if (wide <= width && items.length * (size + 1.5) <= height) return { size, items };
+    }
+  }
+  return { size: 6, items: forms[1] };
 }
 
 function openImageDialog() {
