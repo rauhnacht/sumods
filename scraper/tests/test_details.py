@@ -538,8 +538,8 @@ def test_minor_programme_page():
     university / free area, and the stray "Faculty Courses" footnote is not an area."""
     import programs
     assert programs.is_minor("PHIL-MINOR") and not programs.is_minor("BSEE-DM")
-    assert programs.MINORS[-1] == "SUST-MINOR" and len(programs.MINORS) == 16
-    assert programs.all_programmes()[-16:] == programs.MINORS          # minors come after every major and its double major
+    assert programs.MINORS[-1] == "SUST-MINOR" and len(programs.MINORS) == 17 and "PHYS-MINOR" in programs.MINORS
+    assert programs.all_programmes()[-17:] == programs.MINORS          # minors come after every major and its double major
     assert programs.minor_name("PHILOSOPHY MINOR UNDERGRADUATE PROGRAM (PHIL-MINOR)", "PHIL-MINOR") == "Philosophy (Minor)"
     assert programs.minor_name("", "PHIL-MINOR") == "PHIL-MINOR"
     parsed = programs.parse_page((HERE / "fixture_minor_phil.html").read_text(encoding="utf-8"))
