@@ -238,14 +238,15 @@ async function rulesTest() {
     const overrides = await loadOverrides();
     const credits = { 'EE 311': [6, 3], 'EE 411': [6, 3], 'EE 412': [6, 3], 'EE 413': [6, 3], 'MATH 212': [7, 4], 'MATH 201': [6, 3], 'MATH 202': [6, 3] };
     const page = { groups: [
-      { name: 'Required Courses', kind: 'required', credits: 33, minCourses: 4, courses: opts.noMath ? ['EE 201'] : ['EE 201', 'MATH 201', 'MATH 202', 'MATH 212'] },
+      { name: 'Required Courses', kind: 'required', ...(opts.econ ? {} : { credits: 33, minCourses: 4 }), courses: opts.noMath ? ['EE 201'] : ['EE 201', 'MATH 201', 'MATH 202', ...(opts.econ ? ['MATH 203'] : []), 'MATH 212'] },
       { name: 'Core Electives', kind: 'core', credits: 12, courses: ['EE 311', 'EE 411', 'EE 412', 'EE 413'] }] };
     const patched = applyOverrides(page, opts.program || 'BSEE', entry, overrides);
     planState().terms = [{ id: '202601', courses: taken.map((code) => ({ code, grade: 'A' })) }];
     const req = requirementProgress({ ...patched, credits });
     const out = {};
+    const left = (req.find((r) => r.group.kind === 'required') || {}).missing || [];
     req.forEach((r) => { out[r.group.kind] = (r.rules || []).map((x) => `${x.met ? 'met' : x.planned ? 'planned' : 'open'}:${x.label}`); });
-    return { rules: out, notes: patched.notes || [] };
+    return { rules: out, notes: patched.notes || [], left };
   }, [entry, taken, opts]);
 
   let r = await run('202402', ['MATH 201']);
@@ -259,6 +260,11 @@ async function rulesTest() {
   check('entered Fall 2025 or later: MATH 201 + 202 no longer replace MATH 212', JSON.stringify(r.rules.required) === '["open:MATH 212 is required"]', JSON.stringify(r.rules.required));
   r = await run('202501', ['MATH 212']);
   check('…and MATH 212 meets it', JSON.stringify(r.rules.required) === '["met:MATH 212 is required"]' && r.notes.length === 1, JSON.stringify(r));
+  r = await run('202501', ['MATH 203'], { program: 'BAECON', econ: true });
+  check('ECON: pick-one math set replaces the MATH 212 rule — one rule line, met by MATH 203',
+    JSON.stringify(r.rules.required) === '["met:Only 1 of MATH 201 / MATH 202 / MATH 203 / MATH 212 is required — the others are optional"]' && r.notes.length === 1, JSON.stringify(r));
+  r = await run('202501', [], { program: 'BAECON', econ: true });
+  check('ECON: with none taken the rule is open and "Left" shows a single "1 of …" entry', /^open:Only 1 of/.test(r.rules.required[0]) && r.left.filter((x) => /^1 of MATH 201/.test(x)).length === 1 && !r.left.includes('MATH 212'), JSON.stringify(r));
   r = await run('202402', [], { noMath: true });
   check('a programme that doesn\'t list MATH 212 gets neither the rule nor the note', !(r.rules.required || []).length && !r.notes.length, JSON.stringify(r));
   r = await run('202602', ['EE 311', 'EE 411']);

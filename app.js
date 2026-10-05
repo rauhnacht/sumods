@@ -179,7 +179,7 @@ function applyOverrides(entry, code, entryTerm, overrides) {
   const base = baseCode(code);
   const forProgram = (o) => o.program === '*' || o.program === base || (Array.isArray(o.program) && o.program.includes(base));
   const inRange = (o) => !o.entries || ((!o.entries.from || entryTerm >= o.entries.from) && (!o.entries.to || entryTerm <= o.entries.to));
-  const relevant = overrides.filter((o) => forProgram(o) && inRange(o));
+  const relevant = overrides.filter((o) => forProgram(o) && inRange(o)).sort((a, b) => Number(!!b.pick) - Number(!!a.pick));   // pick-one sets first: they win over single-course rules
   if (!relevant.length) return entry;
   const groups = (entry.groups || []).map((g) => ({ ...g, courses: g.courses ? g.courses.slice() : g.courses, rules: (g.rules || []).slice() }));
   const notes = [];
@@ -198,11 +198,23 @@ function applyOverrides(entry, code, entryTerm, overrides) {
       const listed = flatCourseCodes(group.courses);
       const slot = (o.alt || {}).course || o.must;
       const by = o.alt ? o.alt.orAll.filter((c) => listed.includes(c)) : [];
-      applies = listed.includes(slot) && (!o.alt || by.length > 0);
+      applies = listed.includes(slot) && (!o.alt || by.length > 0) && !(group.pick && group.pick.codes.includes(slot));   // already "any one of them"
       if (applies) {
         group.rules.push(o.alt
           ? { label: `${slot}, or ${by.join(' + ')}`, anyOf: [[slot], by] }
           : { label: `${slot} is required`, anyOf: [[slot]] });
+      }
+    }
+    // "MATH 201 / 202 / 203 / 212: only 1 of them is required": the courses stay listed, one of them is enough
+    if (o.pick) {
+      const listed = flatCourseCodes(group.courses);
+      const codes = o.pick.courses.filter((c) => listed.includes(c));
+      applies = codes.length >= 2;
+      if (applies) {
+        const n = o.pick.n || 1;
+        group.pick = { codes, n };
+        group.rules.push({ label: o.pick.label || `Only ${n} of ${codes.join(' / ')} is required — the others are optional`,
+          anyOf: codes.map((c) => [c]) });
       }
     }
     if (o.note && applies) notes.push(o.note);
@@ -2024,6 +2036,13 @@ function requirementProgress(program) {
         }
       }
       missing = group.courses.filter((slot) => !filledSlots.has(slot)).map(slotLabel);
+      if (group.pick) {
+        // a pick-n set counts as n slots: once n of them are in, the rest are no longer "left"
+        const inSet = (slot) => slotCodes(slot).every((c) => group.pick.codes.includes(c));
+        const have = group.courses.filter((slot) => inSet(slot) && filledSlots.has(slot)).length;
+        missing = group.courses.filter((slot) => !filledSlots.has(slot) && !inSet(slot)).map(slotLabel);
+        if (have < group.pick.n) missing.push(`${group.pick.n - have} of ${group.pick.codes.join(' / ')}`);
+      }
     } else {
       // credit/count/any/match-driven electives: listed courses first so they aren't crowded
       // out of their own area by overflow from other groups
@@ -2045,7 +2064,8 @@ function requirementProgress(program) {
       ects,
       earned: earnedCredits(matches),
       target: group.credits || null,
-      targetCount: group.minCourses || group.choose || (group.courses && !group.credits ? group.courses.length : null),
+      targetCount: group.minCourses || group.choose
+        || (group.courses && !group.credits ? group.courses.length - (group.pick ? group.pick.codes.length - group.pick.n : 0) : null),
       missing,
       rules: ruleStatus(group, matches),
     };

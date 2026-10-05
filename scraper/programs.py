@@ -135,8 +135,8 @@ def make_probe_session():
     from urllib3.util.retry import Retry
 
     session = make_session()
-    retry = Retry(total=2, backoff_factor=1, status_forcelist=(429, 502, 503, 504),
-                  allowed_methods=frozenset(["GET"]))
+    retry = Retry(total=2, read=0, backoff_factor=1, status_forcelist=(429, 502, 503, 504),
+                  allowed_methods=frozenset(["GET"]))              # read=0: a page that hangs is not asked again
     session.mount("https://", HTTPAdapter(max_retries=retry))
     return session
 
@@ -759,7 +759,7 @@ def main(argv=None) -> int:
             url = URL.format(term=entry_term, program=program)
             print(f"{program} {entry_term}")
             try:
-                res = (probe if sparse else session).get(url, timeout=60)
+                res = (probe if sparse else session).get(url, timeout=(10, 25) if sparse else 60)   # a missing minor/DM page can hang: give up fast
                 res.raise_for_status()
             except Exception as exc:
                 print(f"  failed: {'no such programme page' if '500' in str(exc) else exc}", file=sys.stderr)

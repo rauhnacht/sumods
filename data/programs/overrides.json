@@ -78,6 +78,23 @@
      "within": "group"
     }
    ]
+  },
+  {
+   "program": [
+    "BAECON",
+    "BAECON-DM"
+   ],
+   "group": "required",
+   "pick": {
+    "courses": [
+     "MATH 201",
+     "MATH 202",
+     "MATH 203",
+     "MATH 212"
+    ],
+    "n": 1
+   },
+   "note": "Math requirement: only one of MATH 201 / 202 / 203 / 212 is needed."
   }
  ]
 }
