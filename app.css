@@ -545,6 +545,11 @@ main { padding: 14px max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-a
 html { overflow-x: hidden; }
 @supports (overflow: clip) { html { overflow-x: clip; } body { overflow-x: clip; } }
 body { overscroll-behavior-x: none; }
+/* iOS Safari ignores overflow-x on the page for touch panning (it shows up when the phone is turned sideways): only vertical
+   panning (and pinch) is allowed on the page itself. Scrollers like the timetable grid are their own scroll containers,
+   so they keep their sideways scrolling. */
+html, body { touch-action: pan-y pinch-zoom; width: 100%; }
+#grid, #room-grid, .tt-scroll, .pg-wrap { touch-action: pan-x pan-y pinch-zoom; }
 .reg-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .reg-table th { text-align: left; font-size: 11px; color: var(--ink-3); font-weight: 600; padding-bottom: 4px; }
 .reg-table td { padding: 5px 8px 5px 0; border-top: 1px solid var(--rule); vertical-align: middle; }
