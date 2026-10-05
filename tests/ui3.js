@@ -292,11 +292,11 @@ async function minorsTest() {
 
   check('minors are in neither the main nor the double-major picker',
     !(await opts('#plan-program')).some((c) => /MINOR/.test(c)) && !(await opts('#plan-program2')).some((c) => /MINOR/.test(c)));
-  check('"Add minor" offers both minors', JSON.stringify(await opts('#plan-minor-add')) === '["PHIL-MINOR","MATH-MINOR"]', JSON.stringify(await opts('#plan-minor-add')));
+  check('"Add minor" offers both minors', JSON.stringify(await opts('#plan-minor-add')) === '["MATH-MINOR","PHIL-MINOR"]', JSON.stringify(await opts('#plan-minor-add')));
 
   await p.selectOption('#plan-minor-add', 'PHIL-MINOR'); await p.waitForTimeout(500);
   check('the added minor shows as a chip and leaves the "Add minor" list',
-    (await p.locator('.minor-chip', { hasText: 'Philosophy minor' }).count()) === 1 && JSON.stringify(await opts('#plan-minor-add')) === '["MATH-MINOR"]',
+    (await p.locator('.minor-chip', { hasText: 'Philosophy' }).count()) === 1 && JSON.stringify(await opts('#plan-minor-add')) === '["MATH-MINOR"]',
     JSON.stringify(await opts('#plan-minor-add')));
   await p.selectOption('#plan-minor-add', 'MATH-MINOR'); await p.waitForTimeout(500);
   check('with every minor added the "Add minor" picker is gone', (await p.locator('#plan-minor-add').count()) === 0);

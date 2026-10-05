@@ -2119,10 +2119,22 @@ const programForSubject = (subject) => Object.keys(PROGRAM_SUBJECT).find((k) => 
 
 /** `double`: list only the double-major (-DM) programmes, never the one that matches the main
  * programme. Otherwise list the normal programmes, never the one picked as the double major. */
+/** "BUSINESS ANALYTICS MINOR UNDERGRADUATE PROGRAM (ANALY-MINOR)" -> "Business Analytics": the short name only. */
+function minorLabel(name) {
+  let t = String(name || '').replace(/\(\s*[A-Z0-9-]*-MINOR\s*\)\s*$/i, '').replace(/\(\s*previous name[^)]*\)/i, '')
+    .replace(/undergraduate\s+program(me)?/i, '').replace(/\(\s*minor\s*\)/i, '').replace(/\bminor\b/gi, '')
+    .replace(/\(\s*\)/g, '').replace(/\s+/g, ' ').replace(/^[-–:\s]+|[-–:\s]+$/g, '');
+  if (t && t === t.toUpperCase()) {
+    t = t.toLowerCase().replace(/(^|[\s(&-])([a-zçğıöşü])/g, (m, a, b) => a + b.toUpperCase())
+      .replace(/(?!^)\b(And|Of|The)\b/g, (w) => w.toLowerCase());
+  }
+  return t || String(name || '');
+}
+
 function programSelectOptions(selectedCode, excludeCode, double = false) {
   return ['<option value="">—</option>'].concat((App.programs || [])
     .filter((p) => !isMinor(p.code) && (double ? isDM(p.code) : !isDM(p.code)) && baseCode(p.code) !== baseCode(excludeCode))
-    .map((p) => `<option value="${esc(p.code)}"${p.code === selectedCode ? ' selected' : ''}>${esc(p.name)}${p.legacy ? '' : ` (${esc(p.code)})`}</option>`)).join('');
+    .map((p) => `<option value="${esc(p.code)}"${p.code === selectedCode ? ' selected' : ''}>${esc(double ? p.name.replace(/\s*\(Double Major\)$/i, '') : p.name)}${p.legacy || double ? '' : ` (${esc(p.code)})`}</option>`)).join('');
 }
 
 function entrySelectOptions(programCode, selectedEntry) {
@@ -2297,7 +2309,7 @@ function renderPlanner() {
         ${programs.length > 1 || minors.length ? `<h3 class="side-head" style="margin-top:${i ? '18px' : '0'}">${esc(program.name.replace(/\s*\(Double Major\)$/i, ''))}${i === 0 ? ' (primary)' : ' (double major)'}</h3>` : ''}
         ${requirementBlockHTML(program, i === 0 ? 'p1' : 'p2')}`).join('');
   const minorsHTML = minors.map((program, i) => `
-        <h3 class="side-head" style="margin-top:${programs.length || i ? '18px' : '0'}">${esc(program.name.replace(/\s*\(Minor\)$/i, ''))} (minor)</h3>
+        <h3 class="side-head" style="margin-top:${programs.length || i ? '18px' : '0'}">${esc(minorLabel(program.name))} (minor)</h3>
         ${requirementBlockHTML(program, `m${i}`)}`).join('');
   const reqHTML = programs.length || minors.length
     ? majorsHTML + minorsHTML
@@ -2306,11 +2318,11 @@ function renderPlanner() {
   const minorsBar = `${plan.minors.map((m) => {
     const listed = (App.programs || []).find((p) => p.code === m.code);
     const entries = entrySelectOptions(m.code, (minors.find((r) => r.code === m.code) || {}).entry || m.entry);
-    return `<span class="minor-chip"><b>${esc(listed ? listed.name.replace(/\s*\(Minor\)$/i, '') : m.code)} minor</b>
+    return `<span class="minor-chip"><b>${esc(listed ? minorLabel(listed.name) : m.code)}</b>
       ${entries ? `<select class="select" data-minor-entry="${esc(m.code)}" aria-label="Entry term for ${esc(m.code)}">${entries}</select>` : ''}
       <button type="button" class="sem-x" data-minor-remove="${esc(m.code)}" aria-label="Remove ${esc(m.code)}">✕</button></span>`;
   }).join('')}${minorChoices.length ? `<label class="reg-pick"><select class="select" id="plan-minor-add" aria-label="Add minor">
-      <option value="">+ Add minor</option>${minorChoices.map((p) => `<option value="${esc(p.code)}">${esc(p.name.replace(/\s*\(Minor\)$/i, ''))}</option>`).join('')}</select></label>` : ''}`;
+      <option value="">+ Add minor</option>${minorChoices.slice().sort((a, b) => minorLabel(a.name).localeCompare(minorLabel(b.name))).map((p) => `<option value="${esc(p.code)}">${esc(minorLabel(p.name))}</option>`).join('')}</select></label>` : ''}`;
 
   host.innerHTML = `
     <div class="filters">
