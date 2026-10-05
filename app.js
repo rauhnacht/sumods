@@ -3392,7 +3392,7 @@ function timetableSVG() {
       const fg = token(`--c${b.color}-ink`, '#123c97');
       out.push(`<rect x="${x + 2}" y="${top}" width="${Math.max(6, w - 4)}" height="${laneH - 6}" rx="7" fill="${token(`--c${b.color}-bg`, '#d9e6ff')}" stroke="${token(`--c${b.color}-edge`, '#a8c4f7')}"/>`);
       out.push(`<text x="${x + 10}" y="${top + 18}" font-size="13" font-weight="700" fill="${fg}">${esc(b.code)}${b.group && b.group !== '0' ? ` ${esc(b.group)}` : ''}</text>`);
-      if (b.where && w > 90) out.push(`<text x="${x + 10}" y="${top + 34}" font-size="11.5" fill="${fg}" opacity=".8">${esc(b.where)}</text>`);
+      if (b.where && w > 60) out.push(`<text x="${x + 10}" y="${top + 34}" font-size="11.5" fill="${fg}" opacity=".8">${esc(b.where)}</text>`);
     }
     y += h;
   }
@@ -3401,10 +3401,71 @@ function timetableSVG() {
   return out.join('');
 }
 
-async function saveTimetableImage() {
-  const svg = timetableSVG();
+/** The timetable as a phone wallpaper: days as columns, sized for an iPhone 13 screen (390 x 844 pt, exported
+ * at 3x = 1170 x 2532 px). The top is left clear for the lock-screen clock, and each class shows its room. */
+function timetableColumnsSVG() {
+  const css = getComputedStyle(document.documentElement);
+  const token = (name, fallback) => (css.getPropertyValue(name) || fallback).trim();
+  const blocks = planBlocks();
+  if (!blocks.length) return null;
+  const [startMin, endMin] = axisRange(blocks);
+  const span = endMin - startMin;
+  const days = [0, 1, 2, 3, 4];
+  if (blocks.some((b) => b.day === 5)) days.push(5);
+  const W = 390, H = 844, side = 10, axisW = 30, headY = 156, top = 166, bottom = H - 96;
+  const colW = (W - side * 2 - axisW) / days.length;
+  const hourH = (bottom - top) / (span / 60);
+  const ink = token('--ink', '#13213c'), ink3 = token('--ink-3', '#7b869d');
+  const rule = token('--rule', '#dde3ec'), paper = token('--paper', '#f2f5f9');
+  const fit = (text, width, size) => {
+    const room = Math.max(1, Math.floor(width / (size * 0.62)));
+    return text.length <= room ? text : `${text.slice(0, Math.max(1, room - 1))}…`;
+  };
+  const out = [`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="Instrument Sans, system-ui, sans-serif">`,
+    `<rect width="${W}" height="${H}" fill="${paper}"/>`];
+  for (let t = startMin; t <= endMin; t += 60) {
+    const y = top + ((t - startMin) / span) * (bottom - top);
+    out.push(`<line x1="${side + axisW - 4}" y1="${y}" x2="${W - side}" y2="${y}" stroke="${rule}" stroke-width=".6"/>`);
+    out.push(`<text x="${side + axisW - 7}" y="${y + 3}" font-size="8.5" fill="${ink3}" text-anchor="end">${hhmm(t)}</text>`);
+  }
+  days.forEach((day, i) => {
+    const x0 = side + axisW + i * colW;
+    out.push(`<text x="${x0 + colW / 2}" y="${headY}" font-size="11" font-weight="700" fill="${ink}" text-anchor="middle">${DAYS[day]}</text>`);
+    const items = laneLayout(blocks.filter((b) => b.day === day), true);
+    for (const { block: b, lane, lanes } of items) {
+      const w = colW / lanes;
+      const x = x0 + lane * w + 1;
+      const y = top + ((b.start - startMin) / span) * (bottom - top) + 1;
+      const h = Math.max(14, ((b.end - b.start) / span) * (bottom - top) - 2);
+      const fg = token(`--c${b.color}-ink`, '#123c97');
+      const tw = w - 8;
+      out.push(`<rect x="${x}" y="${y}" width="${w - 2}" height="${h}" rx="5" fill="${token(`--c${b.color}-bg`, '#d9e6ff')}" stroke="${token(`--c${b.color}-edge`, '#a8c4f7')}" stroke-width=".8"/>`);
+      const code = `${b.code}${b.group && b.group !== '0' ? ` ${b.group}` : ''}`;
+      out.push(`<text x="${x + 4}" y="${y + 11.5}" font-size="9.5" font-weight="700" fill="${fg}">${esc(fit(code, tw, 9.5))}</text>`);
+      if (b.where && h >= 28) out.push(`<text x="${x + 4}" y="${y + 22.5}" font-size="8.5" fill="${fg}" opacity=".85">${esc(fit(b.where, tw, 8.5))}</text>`);
+    }
+  });
+  out.push('</svg>');
+  return out.join('');
+}
+
+function openImageDialog() {
+  if (!planBlocks().length) { toast('Add a course first'); return; }
+  $('#image-body').innerHTML = `
+    <p>How should the picture be laid out?</p>
+    <label class="opt"><input type="radio" name="img-layout" value="columns" checked>
+      <span><b>Columns</b> — days side by side, sized for an iPhone 13 screen (1170 × 2532) so it works as a wallpaper. Courses show their room.</span></label>
+    <label class="opt"><input type="radio" name="img-layout" value="rows">
+      <span><b>Rows</b> — one row per day, wide, for sharing or printing.</span></label>`;
+  $('#dlg-image').showModal();
+}
+
+async function saveTimetableImage(layout = 'rows') {
+  const columns = layout === 'columns';
+  const svg = columns ? timetableColumnsSVG() : timetableSVG();
   if (!svg) { toast('Add a course first'); return; }
-  const name = `sumods-${store.term}`;
+  const name = `sumods-${store.term}${columns ? '-phone' : ''}`;
+  const scale = columns ? 3 : 2;
   try {
     const image = await new Promise((resolve, reject) => {
       const img = new Image();
@@ -3413,10 +3474,10 @@ async function saveTimetableImage() {
       img.src = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
     });
     const canvas = document.createElement('canvas');
-    canvas.width = image.width * 2;
-    canvas.height = image.height * 2;
+    canvas.width = image.width * scale;
+    canvas.height = image.height * scale;
     const ctx = canvas.getContext('2d');
-    ctx.scale(2, 2);
+    ctx.scale(scale, scale);
     ctx.drawImage(image, 0, 0);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) throw new Error('no image');
@@ -4079,7 +4140,7 @@ function bindEvents() {
     if (id === 'act-arrange') $('#dlg-arrange').showModal();
     if (id === 'act-finder') openFinder();
     if (id === 'act-export') openExportDialog();
-    if (id === 'act-image') saveTimetableImage();
+    if (id === 'act-image') openImageDialog();
     if (id === 'act-event') openEventDialog(null);
     if (id === 'act-clear') {
       pushUndo('clear');
@@ -4161,6 +4222,13 @@ function bindEvents() {
         $('#dlg-arrange').close();
       }
     }
+  });
+
+  $('#dlg-image').addEventListener('click', (e) => {
+    if (e.target.id !== 'image-run') return;
+    const layout = ($('#dlg-image input[name="img-layout"]:checked') || {}).value || 'columns';
+    $('#dlg-image').close();
+    saveTimetableImage(layout);
   });
 
   $('#dlg-export').addEventListener('click', async (e) => {

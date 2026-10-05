@@ -139,7 +139,7 @@ const check = (name, ok, extra = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${nam
   check('calendar export downloads an .ics', !!calendarFile && /\.ics$/.test(await calendarFile.suggestedFilename()));
   const [imageFile] = await Promise.all([
     page.waitForEvent('download', { timeout: 8000 }).catch(() => null),
-    page.click('#act-image'),
+    page.click('#act-image').then(() => page.click('#image-run')),
   ]);
   check('image export downloads a picture', !!imageFile && /\.(png|svg)$/.test(await imageFile.suggestedFilename()));
 
