@@ -1414,6 +1414,7 @@ function icon(name) {
     trash: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8.2h4.8L11 4.5"/>',
     search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/>',
     sun: '<circle cx="8" cy="8" r="3"/><path d="M8 1v1.6M8 13.4V15M15 8h-1.6M2.6 8H1M12.9 3.1l-1.1 1.1M4.2 11.8l-1.1 1.1M12.9 12.9l-1.1-1.1M4.2 4.2L3.1 3.1"/>',
+    robot: '<rect x="2.5" y="5.5" width="11" height="8" rx="2"/><path d="M8 5.5V3M8 2.9v.1M5.8 9v.1M10.2 9v.1M6 11.6h4M1 8.5v2M15 8.5v2"/>',
     moon: '<path d="M13 9.5A5.5 5.5 0 116.5 3a4.5 4.5 0 006.5 6.5z"/>',
     grid: '<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 6h13M6 6v7.5"/>',
     book: '<path d="M2.5 3.5h4a2 2 0 012 2v8a1.6 1.6 0 00-1.4-1H2.5zM13.5 3.5h-4a2 2 0 00-2 2v8a1.6 1.6 0 011.4-1h4.6z"/>',
@@ -3757,7 +3758,7 @@ function applyTheme() {
   document.documentElement.setAttribute('data-theme', mode === 'auto' ? '' : mode);
   const btn = $('#theme-btn');
   if (btn) {
-    btn.innerHTML = icon(mode === 'dark' ? 'moon' : 'sun');
+    btn.innerHTML = icon(mode === 'dark' ? 'moon' : mode === 'light' ? 'sun' : 'robot');
     btn.title = `Theme: ${mode}`;
     btn.setAttribute('aria-label', `Theme: ${mode}. Change`);
   }
