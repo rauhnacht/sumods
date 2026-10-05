@@ -118,7 +118,7 @@ def parse_daily(payload) -> list[dict]:
     days = []
     for n, keys in sorted(day_keys(row).items()):
         date = local_date(row.get(keys.get("date")))
-        if not date:
+        if not date or any(d["date"] == date for d in days):      # "Gun0" is today again (same as Gun1)
             continue
         code = str(row.get(keys.get("event"), "") or "").strip().upper()
         icon, text = EVENTS.get(code, ("cloud", code or "—"))
