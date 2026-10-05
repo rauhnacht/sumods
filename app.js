@@ -1094,8 +1094,10 @@ function classStanding() {
 
 /** BannerWeb's registration-days list uses short department codes (EE, MAT, CS…), not the
  * programme codes the degree-requirement pages use (BSEE, BSMAT…). */
+/** The departments the registration-days pickers offer — the same list for the programme and the double major. */
+const REG_PROGRAMS = ['BIO', 'CS', 'DSA', 'ECON', 'EE', 'IE (MS)', 'MAN', 'MAT', 'ME', 'PSIR', 'PSY', 'VACD', 'Undeclared'];
 const PROGRAM_SUBJECT = {
-  BSCS: 'CS', BSEE: 'EE', BSMAT: 'MAT', BSMS: 'IE', BSBIO: 'BIO', BSDSA: 'DSA', BSME: 'ME',
+  BSCS: 'CS', BSEE: 'EE', BSMAT: 'MAT', BSMS: 'IE (MS)', BSBIO: 'BIO', BSDSA: 'DSA', BSME: 'ME',
   BAECON: 'ECON', BAVACD: 'VACD', BAPSIR: 'PSIR', BAPSY: 'PSY', BAMAN: 'MAN',
 };
 
@@ -1115,6 +1117,7 @@ const myPrograms = () => myProgramPair().filter(Boolean);
 function applyRegPrograms(first, second) {
   const plan = planState();
   if (first && first === second) second = '';
+  if (!first || first === 'Undeclared') second = '';        // no main programme, no double major
   if (second === 'Undeclared') second = '';
   const known = (code) => code && (App.programs || []).some((p) => p.code === code);
   const p1 = first ? programForSubject(first) : null;
@@ -1181,7 +1184,7 @@ function renderRegDays() {
   if (!App.regdays) { host.innerHTML = ''; return; }
 
   const [first, second] = myProgramPair();
-  const options = (selected, skip = []) => ['<option value="">—</option>'].concat(App.regdays.programs
+  const options = (selected, skip = []) => ['<option value="">—</option>'].concat(REG_PROGRAMS
     .filter((p) => !skip.includes(p)).map((p) =>
       `<option value="${esc(p)}"${p === selected ? ' selected' : ''}>${esc(p)}</option>`)).join('');
 
@@ -1208,8 +1211,8 @@ function renderRegDays() {
       <h3 class="side-head">Registration days</h3>
       <label class="reg-pick">Programme
         <select class="select" id="reg-program">${options(first, [second])}</select></label>
-      <label class="reg-pick">Double major
-        <select class="select" id="reg-major2">${options(second, [first, 'Undeclared'])}</select></label>
+      ${first && first !== 'Undeclared' ? `<label class="reg-pick">Double major
+        <select class="select" id="reg-major2">${options(second, [first, 'Undeclared'])}</select></label>` : ''}
     </div>
     ${myPrograms().length ? `
       <table class="reg-table">
@@ -2315,7 +2318,9 @@ function renderPlanner() {
   const reqHTML = programs.length || minors.length
     ? majorsHTML + minorsHTML
     : '<p class="empty-note">No programme loaded. Put a curriculum in data/programs.json (tools/import_program.py builds one) to track requirements.</p>';
-  const minorChoices = (App.programs || []).filter((p) => isMinor(p.code) && !plan.minors.some((m) => m.code === p.code));
+  // someone with no (or an "Undeclared") main programme gets no double major and no minor to pick
+  const declared = !!plan.program || (!!plan.regPrimary && plan.regPrimary !== 'Undeclared');
+  const minorChoices = declared ? (App.programs || []).filter((p) => isMinor(p.code) && !plan.minors.some((m) => m.code === p.code)) : [];
   const minorsBar = `${plan.minors.map((m) => {
     const listed = (App.programs || []).find((p) => p.code === m.code);
     const entries = entrySelectOptions(m.code, (minors.find((r) => r.code === m.code) || {}).entry || m.entry);
@@ -2330,8 +2335,8 @@ function renderPlanner() {
       <label class="reg-pick">Programme
         <select class="select" id="plan-program" aria-label="Programme">${programSelectOptions(plan.program, plan.program2)}</select></label>
       ${entryOptions1 ? `<select class="select" id="plan-entry" aria-label="Entry term">${entryOptions1}</select>` : ''}
-      <label class="reg-pick">Double major
-        <select class="select" id="plan-program2" aria-label="Double major">${programSelectOptions(plan.program2, plan.program, true)}</select></label>
+      ${declared || plan.program2 ? `<label class="reg-pick">Double major
+        <select class="select" id="plan-program2" aria-label="Double major">${programSelectOptions(plan.program2, plan.program, true)}</select></label>` : ''}
       ${entryOptions2 ? `<select class="select" id="plan-entry2" aria-label="Second entry term">${entryOptions2}</select>` : ''}
       ${(() => {
         const standing = classStanding();
