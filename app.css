@@ -414,6 +414,7 @@ main { padding: 14px max(14px, env(safe-area-inset-left)) 0 max(14px, env(safe-a
 .req-rule { font-size: 12px; color: var(--ink-3); margin: 5px 0 0; }
 .req-rule.met { color: var(--ok); font-weight: 600; }
 .req-rule.planned { color: var(--c2-ink); }
+.req-rule.bad { color: var(--clash); font-weight: 600; }
 .req-rules { display: grid; gap: 4px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 9px; }
 .req-pool-legend .req-pool-planned { background: var(--c2-ink); }
 .req-pool-legend .req-pool-open { background: var(--ink-3); }

@@ -95,6 +95,475 @@
     "n": 1
    },
    "note": "Math requirement: only one of MATH 201 / 202 / 203 / 212 is needed."
+  },
+  {
+   "program": [
+    "BSCS",
+    "BSMS",
+    "BSMAT",
+    "BSME",
+    "BSBIO"
+   ],
+   "group": "faculty",
+   "groupNote": "In line with the conditions stated by the Faculties, a total of at least 5 courses should be completed from FENS Faculty Courses and/or FASS, SBS Faculty Courses. At least 2 of these courses must be MATH coded. In addition, at least 3 of these courses must be from the pool of FENS Faculty Courses. These courses may be taken while fulfilling the degree requirements for the program.",
+   "rules": [
+    {
+     "label": "At least 2 MATH-coded courses",
+     "match": "^MATH \\d",
+     "min": 2,
+     "within": "group"
+    },
+    {
+     "label": "At least 3 courses from the FENS Faculty pool",
+     "pool": "FENS",
+     "min": 3,
+     "within": "group"
+    }
+   ]
+  },
+  {
+   "program": [
+    "BAECON",
+    "BAPSIR",
+    "BAPSY",
+    "BAVACD"
+   ],
+   "group": "faculty",
+   "groupNote": "At least 5 courses should be completed from FENS, FASS and SOM Faculty Courses. At least three of these courses must be from the pool of FASS Faculty Courses. These five courses must be distributed over at least three out of eight areas: the FENS and SOM pools of faculty courses count as the seventh and eighth area in addition to the six FASS areas (CULT, ECON, HART, PSYCH, SPS/POLS/IR, VA). These courses may have been taken while fulfilling the other degree requirements for the program.",
+   "rules": [
+    {
+     "label": "At least 3 courses from the FASS Faculty pool",
+     "pool": "FASS",
+     "min": 3,
+     "within": "group"
+    },
+    {
+     "label": "The courses spread over at least 3 of the 8 areas",
+     "distinct": "area",
+     "min": 3,
+     "within": "group"
+    }
+   ]
+  },
+  {
+   "program": "BAMAN",
+   "group": "faculty",
+   "groupNote": "In line with the conditions stated by the Faculties, a total of at least 5 courses should be completed from FENS, FASS and SOM Faculty Courses. At least 2 of these courses must be from the pool of SOM Faculty Courses. These courses may have been taken while fulfilling the other degree requirements for the program.",
+   "rules": [
+    {
+     "label": "At least 2 courses from the SOM Faculty pool",
+     "pool": "SBS",
+     "min": 2,
+     "within": "group"
+    }
+   ]
+  },
+  {
+   "program": "BSDSA",
+   "group": "faculty",
+   "groupNote": "Students must complete a minimum of 5 courses in total from the FASS, FENS, and SBS Faculty Course pools, ensuring that at least 1 course is taken from each of the FASS, FENS, and SBS pools. These courses can also count towards fulfilling other degree requirements of the program.",
+   "rules": [
+    {
+     "label": "At least 1 course from the FASS Faculty pool",
+     "pool": "FASS",
+     "min": 1,
+     "within": "group"
+    },
+    {
+     "label": "At least 1 course from the FENS Faculty pool",
+     "pool": "FENS",
+     "min": 1,
+     "within": "group"
+    },
+    {
+     "label": "At least 1 course from the SBS Faculty pool",
+     "pool": "SBS",
+     "min": 1,
+     "within": "group"
+    }
+   ]
+  },
+  {
+   "program": "BSDSA",
+   "group": "core",
+   "groupNote": "The students will take at least 27 SU credits from the CORE course pool. Students are required to take at least 3 courses from FENS, 3 courses from FASS and 3 courses from SBS in this CORE course pool. The extra courses taken from this pool are directly counted towards \"Area Elective\" course requirements. OPIM 410 and IE 405 are \"mutually exclusive\": at most one of these courses can be taken.",
+   "exclusive": [
+    [
+     "IE 405",
+     "OPIM 410"
+    ]
+   ],
+   "rules": [
+    {
+     "label": "At least 3 FENS courses",
+     "school": "FENS",
+     "min": 3,
+     "within": "group"
+    },
+    {
+     "label": "At least 3 FASS courses",
+     "school": "FASS",
+     "min": 3,
+     "within": "group"
+    },
+    {
+     "label": "At least 3 SBS courses",
+     "school": "SBS",
+     "min": 3,
+     "within": "group"
+    },
+    {
+     "label": "IE 405 and OPIM 410 are mutually exclusive — at most one",
+     "codes": [
+      "IE 405",
+      "OPIM 410"
+     ],
+     "max": 1
+    }
+   ]
+  },
+  {
+   "program": "BSDSA",
+   "group": "area",
+   "groupNote": "IE 405 and OPIM 410 are mutually exclusive. At most one of these courses can be taken.",
+   "rules": [
+    {
+     "label": "IE 405 and OPIM 410 are mutually exclusive — at most one",
+     "codes": [
+      "IE 405",
+      "OPIM 410"
+     ],
+     "max": 1
+    }
+   ]
+  },
+  {
+   "program": "BAECON",
+   "group": "area",
+   "groupNote": "Min. 6 courses from the pool below. With the instructor's and advisor's approvals max. 3 graduate courses can be taken only during the graduation year. The extra courses taken from this pool are directly counted towards Free Elective Course requirements.",
+   "rules": [
+    {
+     "label": "At least 6 courses from the area pool",
+     "match": ".",
+     "min": 6,
+     "within": "group"
+    }
+   ]
+  },
+  {
+   "program": "BAECON",
+   "group": "free",
+   "groupNote": "30 SU credits, excluding \"University Courses\", must be completed. At most 2 of the Beginning / Basic level language courses can be used to fulfil this area."
+  },
+  {
+   "program": "BAMAN",
+   "group": "core",
+   "groupNote": "Choose at least one course from each area (ACC, FIN, MGMT, MKTG, OPIM, ORG) from the pool below.",
+   "rules": [
+    {
+     "label": "At least one course from each of ACC, FIN, MGMT, MKTG, OPIM, ORG",
+     "each": [
+      "ACC",
+      "FIN",
+      "MGMT",
+      "MKTG",
+      "OPIM",
+      "ORG"
+     ],
+     "within": "group"
+    }
+   ]
+  },
+  {
+   "program": "BAMAN",
+   "group": "area",
+   "groupNote": "Choose 24 SU credits from the Area Elective Pool, with at least one course from each of ACC, FIN, MKTG, OPIM and ORG. Each additional core elective course taken (after completing the core elective requirements) can be accounted for area electives.",
+   "rules": [
+    {
+     "label": "At least one course from each of ACC, FIN, MKTG, OPIM, ORG",
+     "each": [
+      "ACC",
+      "FIN",
+      "MKTG",
+      "OPIM",
+      "ORG"
+     ],
+     "within": "group"
+    }
+   ]
+  },
+  {
+   "program": "BAMAN",
+   "group": "free",
+   "groupNote": "9 of these 26 SU credits should be among courses offered by FASS or FENS. At most 2 of the Beginning / Basic level language courses can be used to fulfil this area. Each additional core and area elective course taken (after completing those requirements) can be accounted for free electives.",
+   "rules": [
+    {
+     "label": "At least 9 SU credits from FASS or FENS courses",
+     "school": [
+      "FASS",
+      "FENS"
+     ],
+     "minCredits": 9,
+     "within": "group"
+    }
+   ]
+  },
+  {
+   "program": "BAPSY",
+   "group": "required",
+   "groupNote": "Philosophy requirement: either one of PHIL 300 / PHIL 301.",
+   "pick": {
+    "courses": [
+     "PHIL 300",
+     "PHIL 301"
+    ],
+    "n": 1,
+    "label": "Philosophy requirement: either PHIL 300 or PHIL 301"
+   }
+  },
+  {
+   "program": "BAPSY",
+   "group": "area",
+   "groupNote": "At least 6 courses from all PSY coded undergraduate courses, and at least 2 of them PSY 4XX-level advanced Psychology courses. Max. 3 graduate courses can count if the student is in the graduation year and the advisor and the course instructor approve. The extra courses taken from this pool are counted towards Free Elective requirements.",
+   "rules": [
+    {
+     "label": "At least 6 PSY-coded courses",
+     "match": "^PSY \\d",
+     "min": 6,
+     "within": "group"
+    },
+    {
+     "label": "At least 2 courses from PSY 4XX",
+     "match": "^PSY 4\\d\\d$",
+     "min": 2,
+     "within": "group"
+    }
+   ]
+  },
+  {
+   "program": "BAVACD",
+   "group": "required",
+   "add": [
+    "PROJ 300"
+   ],
+   "groupNote": "Only one of the following course pairs will be counted towards the degree: VA 301 or VA 303, VA 401 or VA 403, VA 300 or PROJ 300. All the other courses are required.",
+   "exclusive": [
+    [
+     "VA 301",
+     "VA 303"
+    ],
+    [
+     "VA 401",
+     "VA 403"
+    ],
+    [
+     "VA 300",
+     "PROJ 300"
+    ]
+   ],
+   "rules": [
+    {
+     "label": "VA 301 or VA 303 (only one counts)",
+     "anyOf": [
+      [
+       "VA 301"
+      ],
+      [
+       "VA 303"
+      ]
+     ]
+    },
+    {
+     "label": "VA 401 or VA 403 (only one counts)",
+     "anyOf": [
+      [
+       "VA 401"
+      ],
+      [
+       "VA 403"
+      ]
+     ]
+    },
+    {
+     "label": "VA 300 or PROJ 300 (only one counts)",
+     "anyOf": [
+      [
+       "VA 300"
+      ],
+      [
+       "PROJ 300"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "program": "BAVACD",
+   "groupLike": "Skill",
+   "groupNote": "Min. 12 SU credits from the pool. Only one of the following pairs counts for the degree: VA 302 or VA 304, VA 402 or VA 404. The extra courses taken from this pool are counted towards Area Elective requirements.",
+   "exclusive": [
+    [
+     "VA 302",
+     "VA 304"
+    ],
+    [
+     "VA 402",
+     "VA 404"
+    ]
+   ],
+   "rules": [
+    {
+     "label": "VA 302 / VA 304 — only one counts",
+     "codes": [
+      "VA 302",
+      "VA 304"
+     ],
+     "max": 1
+    },
+    {
+     "label": "VA 402 / VA 404 — only one counts",
+     "codes": [
+      "VA 402",
+      "VA 404"
+     ],
+     "max": 1
+    }
+   ]
   }
- ]
+ ],
+ "pools": {
+  "FENS": [
+   "CHEM 212",
+   "CS 201",
+   "CS 204",
+   "DSA 201",
+   "DSA 210",
+   "EE 200",
+   "EE 202",
+   "ENS 201",
+   "ENS 202",
+   "ENS 203",
+   "ENS 204",
+   "ENS 205",
+   "ENS 206",
+   "ENS 207",
+   "ENS 208",
+   "ENS 209",
+   "ENS 210",
+   "ENS 211",
+   "ENS 214",
+   "ENS 216",
+   "MAT 204",
+   "MATH 201",
+   "MATH 202",
+   "MATH 203",
+   "MATH 204",
+   "MATH 212",
+   "NS 201",
+   "NS 207",
+   "NS 213",
+   "NS 214",
+   "NS 216",
+   "NS 218",
+   "PHYS 113",
+   "PHYS 211"
+  ],
+  "FASS": [
+   "ANTH 326",
+   "CULT 368",
+   "GEN 341",
+   "LIT 212",
+   "LIT 359",
+   "PHIL 202",
+   "PHIL 321",
+   "VA 315",
+   "ECON 201",
+   "ECON 202",
+   "ECON 204",
+   "HART 292",
+   "HIST 349",
+   "PSY 201",
+   "PSY 310",
+   "PSY 340",
+   "IR 201",
+   "IR 301",
+   "IR 391",
+   "IR 394",
+   "POLS 250",
+   "POLS 301",
+   "SOC 201",
+   "SOC 301",
+   "HART 293",
+   "VA 201",
+   "VA 203",
+   "VA 312"
+  ],
+  "SBS": [
+   "ACC 201",
+   "FIN 301",
+   "MGMT 402",
+   "MKTG 301",
+   "OPIM 302",
+   "ORG 301",
+   "ORG 302"
+  ]
+ },
+ "schools": {
+  "FENS": [
+   "BIO",
+   "CHEM",
+   "CS",
+   "DSA",
+   "EE",
+   "ENRG",
+   "ENS",
+   "IE",
+   "MAT",
+   "MATH",
+   "ME",
+   "NS",
+   "PHYS"
+  ],
+  "FASS": [
+   "ANTH",
+   "CULT",
+   "ECON",
+   "GEN",
+   "HART",
+   "HIST",
+   "IR",
+   "LIT",
+   "PHIL",
+   "POLS",
+   "PSIR",
+   "PSY",
+   "SOC",
+   "SPS",
+   "VA"
+  ],
+  "SBS": [
+   "ACC",
+   "FIN",
+   "MGMT",
+   "MKTG",
+   "OPIM",
+   "ORG"
+  ]
+ },
+ "areas": {
+  "CULT": "CULT",
+  "ANTH": "CULT",
+  "GEN": "CULT",
+  "LIT": "CULT",
+  "PHIL": "CULT",
+  "HIST": "CULT",
+  "ECON": "ECON",
+  "HART": "HART",
+  "PSY": "PSYCH",
+  "SPS": "SPS/POLS/IR",
+  "POLS": "SPS/POLS/IR",
+  "IR": "SPS/POLS/IR",
+  "SOC": "SPS/POLS/IR",
+  "VA": "VA"
+ }
 }

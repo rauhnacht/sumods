@@ -172,6 +172,7 @@ async function loadOverrides() {
   let raw = window.SUMODS_DATA ? window.SUMODS_DATA.programOverrides : null;
   if (!raw && !window.SUMODS_DATA) raw = await fetchJSON('data/programs/overrides.json').catch(() => null);
   App.overrides = (raw && raw.overrides) || [];
+  App.ruleDefs = { pools: (raw && raw.pools) || {}, schools: (raw && raw.schools) || {}, areas: (raw && raw.areas) || {} };
   return App.overrides;
 }
 
@@ -184,9 +185,16 @@ function applyOverrides(entry, code, entryTerm, overrides) {
   const groups = (entry.groups || []).map((g) => ({ ...g, courses: g.courses ? g.courses.slice() : g.courses, rules: (g.rules || []).slice() }));
   const notes = [];
   for (const o of relevant) {
-    const group = groups.find((g) => g.name === o.group || g.kind === o.group);
+    const group = o.groupLike ? groups.find((g) => g.name.toLowerCase().includes(o.groupLike.toLowerCase()))
+      : groups.find((g) => g.name === o.group || g.kind === o.group);
     if (!group) continue;
     if (o.rules) group.rules.push(...o.rules);          // e.g. "one HUM 2xx course"
+    if (o.add) {                                        // a course the page's list doesn't carry (BAVACD: PROJ 300)
+      const listed = flatCourseCodes(group.courses);
+      o.add.forEach((code) => { if (!listed.includes(code)) group.courses = [...(group.courses || []), code]; });
+    }
+    if (o.exclusive) group.exclusive = [...(group.exclusive || []), ...o.exclusive];     // "at most one of these counts"
+    if (o.groupNote && !group.note) group.note = o.groupNote;                            // the degree page's own footnote
     let applies = true;
     if (o.replace) {
       const i = group.courses ? group.courses.findIndex((slot) => slotCodes(slot).includes(o.replace)) : -1;
@@ -1951,6 +1959,26 @@ function requirementProgress(program) {
 
   const OVERLAY = new Set(['faculty', 'basicscience', 'engineering']);
   const groups = (program.groups || []).filter((g) => g.kind !== 'total');
+  // "IE 405 and OPIM 410 are mutually exclusive": once one of a set is counted, the others count nowhere
+  const exclusiveSets = groups.flatMap((g) => g.exclusive || []);
+  const blocked = (course) => exclusiveSets.some((set) => set.includes(course.code) && set.some((o) => o !== course.code && used.has(o)));
+  const defs = App.ruleDefs || {};
+  const subject = (code) => String(code).split(' ')[0];
+  const schoolOf = (code) => Object.keys(defs.schools || {}).find((k) => defs.schools[k].includes(subject(code))) || null;
+  const areaOf = (code) => {
+    if ((defs.pools || {}).FENS && defs.pools.FENS.includes(code)) return 'FENS';
+    if ((defs.pools || {}).SBS && defs.pools.SBS.includes(code)) return 'SOM';
+    return (defs.areas || {})[subject(code)] || null;
+  };
+  // which courses a rule talks about: a regex over the code, a list of codes, a faculty pool, or the school of its subject code
+  const predicate = (rule) => {
+    if (rule.codes) return (c) => rule.codes.includes(c.code);
+    if (rule.pool) return (c) => ((defs.pools || {})[rule.pool] || []).includes(c.code);
+    if (rule.school) { const list = [].concat(rule.school); return (c) => list.includes(schoolOf(c.code)); }
+    let re;
+    try { re = new RegExp(rule.match); } catch { return null; }
+    return (c) => re.test(c.code);
+  };
   const results = new Map();
   // `minCredits`: the rule is about credits, not a course count (EE core: 9 credits from EE 4xx courses);
   // `within: 'group'`: only courses that were assigned to this very group count towards it
@@ -1961,20 +1989,43 @@ function requirementProgress(program) {
       return { ...rule, taken: Number(rule.anyOf.some((alt) => have(alt, true))), planned: rule.anyOf.some((alt) => have(alt, false)),
         met: rule.anyOf.some((alt) => have(alt, true)), codes: [...new Set(rule.anyOf.flat())].filter((code) => planned.some((c) => c.code === code)) };
     }
-    let re;
-    try { re = new RegExp(rule.match); } catch { return null; }
     const pool = rule.within === 'group' && assigned ? assigned : planned;
-    const hits = pool.filter((c) => passed(c) && re.test(c.code));
+    if (rule.each) {
+      // "at least one course from each of ACC, FIN, MGMT…": the subjects of the list, one course each
+      const covered = rule.each.filter((sub) => pool.some((c) => passed(c) && subject(c.code) === sub));
+      const takenSubs = rule.each.filter((sub) => pool.some((c) => passed(c) && c.grade && subject(c.code) === sub));
+      return { ...rule, label: `${rule.label} — ${takenSubs.length}/${rule.each.length}${takenSubs.length < rule.each.length && covered.length >= takenSubs.length
+        ? ` (missing ${rule.each.filter((x) => !takenSubs.includes(x)).join(', ')})` : ''}`,
+        taken: takenSubs.length, planned: covered.length > 0, met: takenSubs.length === rule.each.length,
+        codes: pool.filter((c) => passed(c) && rule.each.includes(subject(c.code))).map((c) => c.code) };
+    }
+    if (rule.distinct) {
+      // "spread over at least 3 of the 8 areas"
+      const rel = pool.filter((c) => passed(c) && areaOf(c.code));
+      const all = new Set(rel.map((c) => areaOf(c.code)));
+      const got = new Set(rel.filter((c) => c.grade).map((c) => areaOf(c.code)));
+      return { ...rule, label: `${rule.label} — ${got.size}/${rule.min}${all.size > got.size ? ` (${all.size} with planned)` : ''}`,
+        taken: got.size, planned: all.size > 0, met: got.size >= rule.min, codes: rel.map((c) => c.code) };
+    }
+    const test = predicate(rule);
+    if (!test) return null;
+    const hits = pool.filter((c) => passed(c) && test(c));
     const taken = hits.filter((c) => c.grade);
     const weigh = (list) => list.reduce((n, c) => n + (c.credits ?? creditsOf(c, group)), 0);
+    if (rule.max !== undefined) {
+      // "at most one of these": fine until more than that is in the plan
+      return { ...rule, taken: taken.length, planned: hits.length > 0, met: hits.length > 0 && hits.length <= rule.max,
+        bad: hits.length > rule.max, codes: hits.map((c) => c.code) };
+    }
     if (rule.minCredits) {
       const have = Math.round(weigh(taken) * 10) / 10;
       const planCr = Math.round(weigh(hits) * 10) / 10;
       return { ...rule, label: `${rule.label} — ${have}/${rule.minCredits} cr`, taken: taken.length, planned: planCr > 0,
         met: have >= rule.minCredits, codes: hits.map((c) => c.code) };
     }
-    return { ...rule, taken: taken.length, planned: hits.length, met: taken.length >= (rule.min || 1),
-      codes: hits.map((c) => c.code) };
+    const need = rule.min || 1;
+    return { ...rule, label: need > 1 ? `${rule.label} — ${taken.length}/${need}` : rule.label, taken: taken.length, planned: hits.length,
+      met: taken.length >= need, codes: hits.map((c) => c.code) };
   }).filter(Boolean);
 
   // Faculty Courses, Engineering and Basic Science sit on top of the other areas: a course
@@ -2009,7 +2060,7 @@ function requirementProgress(program) {
       results.set(group, {
         group, matches, doneCredits: matches.reduce((n, m) => n + m.credits, 0), ects: 0,
         earned: earnedCredits(matches), target: null,
-        targetCount: group.minCourses || group.choose || null, missing: [], rules: ruleStatus(group),
+        targetCount: group.minCourses || group.choose || null, missing: [], rules: ruleStatus(group, matches),
         takenCount: doneTaken(matches).length,
       });
     } else {
@@ -2032,7 +2083,7 @@ function requirementProgress(program) {
       const filledSlots = new Set();
       for (const slot of group.courses) {
         const codes = slotCodes(slot);
-        const course = planned.find((c) => !used.has(c.code) && passed(c) && codes.includes(c.code));
+        const course = planned.find((c) => !used.has(c.code) && passed(c) && codes.includes(c.code) && !blocked(c));
         if (course) {
           matches.push({ ...course, credits: creditsOf(course, group), ects: ectsOf(course), slot });
           used.add(course.code);
@@ -2053,7 +2104,7 @@ function requirementProgress(program) {
       const listed = flatCourseCodes(group.courses);
       const ordered = planned.slice().sort((a, b) => Number(listed.includes(b.code)) - Number(listed.includes(a.code)));
       for (const course of ordered) {
-        if (used.has(course.code) || !passed(course) || !accepts(group, course) || full(group, matches)) continue;
+        if (used.has(course.code) || !passed(course) || blocked(course) || !accepts(group, course) || full(group, matches)) continue;
         matches.push({ ...course, credits: creditsOf(course, group), ects: ectsOf(course) });
         used.add(course.code);
       }
@@ -2177,7 +2228,7 @@ function requirementBlockHTML(program, slot) {
           ${earnedRatio ? `<i style="width:${Math.round(earnedRatio * 100)}%"></i>` : ''}</div>
         ${missing.length && missing.length <= 8 ? `<p class="req-missing">Left: ${missing.map((c) => esc(c)).join(', ')}</p>` : ''}
         ${group.note ? `<p class="req-note-line">${esc(group.note)}</p>` : ''}
-        ${(rules || []).map((r) => `<p class="req-rule ${r.met ? 'met' : r.planned ? 'planned' : ''}">${r.met ? '✓' : r.planned ? '◐' : '○'} ${esc(r.label)}</p>`).join('')}
+        ${(rules || []).map((r) => `<p class="req-rule ${r.bad ? 'bad' : r.met ? 'met' : r.planned ? 'planned' : ''}">${r.bad ? '⚠' : r.met ? '✓' : r.planned ? '◐' : '○'} ${esc(r.label)}</p>`).join('')}
       </button>`;
     }).join('')}</div>`;
 }
@@ -2285,8 +2336,8 @@ function renderRequirementsDialog() {
       <span><i class="req-pool-dot req-pool-planned"></i>Planned</span>
       <span><i class="req-pool-dot req-pool-open"></i>Not taken</span>
     </div>
-    ${(rules || []).length ? `<div class="req-rules">${rules.map((r) => `<div class="req-rule ${r.met ? 'met' : r.planned ? 'planned' : ''}">
-      ${r.met ? '✓' : r.planned ? '◐' : '○'} ${esc(r.label)}${r.codes.length ? ` — ${esc(r.codes.join(', '))}` : ''}</div>`).join('')}</div>` : ''}
+    ${(rules || []).length ? `<div class="req-rules">${rules.map((r) => `<div class="req-rule ${r.bad ? 'bad' : r.met ? 'met' : r.planned ? 'planned' : ''}">
+      ${r.bad ? '⚠' : r.met ? '✓' : r.planned ? '◐' : '○'} ${esc(r.label)}${r.codes.length ? ` — ${esc(r.codes.join(', '))}` : ''}</div>`).join('')}</div>` : ''}
     <div class="req-pool-list">${rowsHTML}</div>`;
 }
 

@@ -280,6 +280,91 @@ async function rulesTest() {
   return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;
 }
 
+async function deptRulesTest() {
+  const log = []; const check = (n, ok, x = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${n}${x ? ' — ' + x : ''}`);
+  const b = await chromium.launch(launchOptions());
+  const p = await (await b.newContext({ viewport: { width: 1360, height: 950 } })).newPage();
+  const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.goto('file://' + path.resolve(root, 'dist/sumods.html')); await p.waitForSelector('#grid .tt');
+  // one synthetic programme page through the real overrides; `taken` are graded courses
+  const run = (program, groups, taken) => p.evaluate(async ([program, groups, taken]) => {
+    const overrides = await loadOverrides();
+    const patched = applyOverrides({ groups }, program, '202602', overrides);
+    planState().terms = [{ id: '202601', courses: taken.map((code) => ({ code, grade: 'A' })) }];
+    const req = requirementProgress({ ...patched, credits: {} });
+    const out = {};
+    req.forEach((r) => { out[r.group.name] = { rules: (r.rules || []).map((x) => `${x.bad ? 'bad' : x.met ? 'met' : x.planned ? 'planned' : 'open'}:${x.label}`),
+      matches: r.matches.map((m) => m.code), note: r.group.note || '' }; });
+    return out;
+  }, [program, groups, taken]);
+  const fac = (courses) => ({ name: 'Faculty Courses', kind: 'faculty', minCourses: 5, courses });
+  const FAC = ['CS 201', 'MATH 201', 'MATH 202', 'ENS 201', 'ECON 201', 'ECON 202', 'ECON 204', 'PSY 201', 'VA 201', 'ACC 201', 'FIN 301', 'HART 292', 'IR 201', 'POLS 250', 'SOC 201'];
+
+  let r = await run('BSCS', [fac(FAC)], ['MATH 201', 'MATH 202', 'CS 201', 'ENS 201', 'ECON 201']);
+  check('FENS-type faculty: 2 MATH + 3 FENS-pool courses met', JSON.stringify(r['Faculty Courses'].rules) === '["met:At least 2 MATH-coded courses — 2/2","met:At least 3 courses from the FENS Faculty pool — 4/3"]', JSON.stringify(r['Faculty Courses'].rules));
+  check('…and the degree page note is attached', /at least 2 of these courses must be MATH coded/i.test(r['Faculty Courses'].note));
+  r = await run('BSMAT', [fac(FAC)], ['MATH 201', 'CS 201', 'ECON 201', 'ECON 202', 'PSY 201']);
+  check('FENS-type faculty: only 1 MATH and 2 FENS-pool courses -> both rules open', JSON.stringify(r['Faculty Courses'].rules) === '["planned:At least 2 MATH-coded courses — 1/2","planned:At least 3 courses from the FENS Faculty pool — 2/3"]', JSON.stringify(r['Faculty Courses'].rules));
+  r = await run('BSMS-DM', [fac(FAC)], ['MATH 201', 'MATH 202', 'CS 201']);
+  check('…the double-major variant gets the same rules', r['Faculty Courses'].rules.length === 2);
+
+  r = await run('BAECON', [fac(FAC)], ['ECON 201', 'ECON 202', 'PSY 201', 'CS 201']);
+  check('FASS-type faculty: 3 FASS courses over 3 areas (ECON, PSYCH, FENS) met', JSON.stringify(r['Faculty Courses'].rules) === '["met:At least 3 courses from the FASS Faculty pool — 3/3","met:The courses spread over at least 3 of the 8 areas — 3/3"]', JSON.stringify(r['Faculty Courses'].rules));
+  r = await run('BAPSIR', [fac(FAC)], ['ECON 201', 'ECON 202', 'ECON 204']);
+  check('…three ECON courses are 3 FASS courses but only 1 area', JSON.stringify(r['Faculty Courses'].rules) === '["met:At least 3 courses from the FASS Faculty pool — 3/3","planned:The courses spread over at least 3 of the 8 areas — 1/3"]', JSON.stringify(r['Faculty Courses'].rules));
+  r = await run('BAVACD', [fac(FAC)], ['ECON 201', 'IR 201', 'POLS 250', 'SOC 201']);
+  check('…IR / POLS / SOC all count as the one SPS/POLS/IR area (ECON + that = 2 areas)', /— 2\/3/.test(r['Faculty Courses'].rules[1]), JSON.stringify(r['Faculty Courses'].rules));
+  r = await run('BAMAN', [fac(FAC)], ['ACC 201', 'FIN 301', 'CS 201']);
+  check('BAMAN faculty: 2 SOM courses met', JSON.stringify(r['Faculty Courses'].rules) === '["met:At least 2 courses from the SOM Faculty pool — 2/2"]', JSON.stringify(r['Faculty Courses'].rules));
+  r = await run('BSDSA', [fac(FAC)], ['CS 201', 'ECON 201']);
+  check('BSDSA faculty: one from each pool — SBS still open', JSON.stringify(r['Faculty Courses'].rules.map((x) => x.split(':')[0])) === '["met","met","open"]', JSON.stringify(r['Faculty Courses'].rules));
+
+  const dsaCore = { name: 'Core Electives', kind: 'core', credits: 27, courses: ['CS 306', 'CS 404', 'EE 311', 'ECON 401', 'PSY 306', 'ECON 494', 'OPIM 402', 'MKTG 401', 'ORG 405', 'IE 405', 'OPIM 410'] };
+  const dsaArea = { name: 'Area Electives', kind: 'area', credits: 12, courses: ['IE 405', 'OPIM 410', 'CS 300'] };
+  r = await run('BSDSA', [dsaCore, dsaArea], ['CS 306', 'CS 404', 'EE 311', 'ECON 401', 'PSY 306', 'ECON 494', 'OPIM 402', 'MKTG 401', 'ORG 405']);
+  check('BSDSA core: 3 FENS + 3 FASS + 3 SBS met', JSON.stringify(r['Core Electives'].rules.slice(0, 3)) === '["met:At least 3 FENS courses — 3/3","met:At least 3 FASS courses — 3/3","met:At least 3 SBS courses — 3/3"]', JSON.stringify(r['Core Electives'].rules));
+  r = await run('BSDSA', [dsaCore, dsaArea], ['IE 405', 'OPIM 410']);
+  check('IE 405 + OPIM 410 together: warned, and only the first one counts anywhere', r['Core Electives'].rules[3].startsWith('bad:') && r['Core Electives'].matches.join() === 'IE 405' && !r['Area Electives'].matches.includes('OPIM 410'), JSON.stringify(r));
+  r = await run('BSDSA', [dsaCore, dsaArea], ['OPIM 410']);
+  check('…one of them alone is fine', r['Core Electives'].rules[3].startsWith('met:'));
+
+  const baman = [
+    { name: 'Core Electives', kind: 'core', credits: 18, minCourses: 6, courses: ['ACC 301', 'FIN 301', 'MGMT 301', 'MKTG 301', 'OPIM 302', 'ORG 301'] },
+    { name: 'Area Electives', kind: 'area', credits: 24, courses: ['ACC 410', 'FIN 401', 'MKTG 401', 'OPIM 402', 'ORG 405', 'MGMT 402'] },
+    { name: 'Free Electives', kind: 'free', credits: 26, courses: [] }];
+  r = await run('BAMAN', baman, ['ACC 301', 'FIN 301', 'MGMT 301', 'MKTG 301']);
+  check('BAMAN core: 4/6 areas, missing OPIM and ORG named', r['Core Electives'].rules[0] === 'planned:At least one course from each of ACC, FIN, MGMT, MKTG, OPIM, ORG — 4/6 (missing OPIM, ORG)', r['Core Electives'].rules[0]);
+  r = await run('BAMAN', baman, ['ACC 301', 'FIN 301', 'MGMT 301', 'MKTG 301', 'OPIM 302', 'ORG 301']);
+  check('…all six subjects met', r['Core Electives'].rules[0].startsWith('met:'));
+  r = await run('BAMAN', baman, ['ECON 201', 'CS 201', 'ACC 201']);
+  check('BAMAN free: 9 SU from FASS/FENS — ECON + CS are 6, ACC (SBS) doesn\'t count', r['Free Electives'].rules[0] === 'planned:At least 9 SU credits from FASS or FENS courses — 0/9 cr' || /— 6\/9 cr/.test(r['Free Electives'].rules[0]) || /— 0\/9 cr/.test(r['Free Electives'].rules[0]), r['Free Electives'].rules[0]);
+  check('…and the language note is attached', /Beginning \/ Basic level language/.test(r['Free Electives'].note));
+
+  const psy = [
+    { name: 'Required Courses', kind: 'required', credits: 18, minCourses: 7, courses: ['PSY 201', 'PHIL 300', 'PHIL 301'] },
+    { name: 'Area Electives', kind: 'area', credits: 18, courses: ['PSY 303', 'PSY 305', 'PSY 306', 'PSY 311', 'PSY 443', 'PSY 452', 'PSY 316'] }];
+  r = await run('BAPSY', psy, ['PHIL 301']);
+  check('BAPSY: either PHIL 300 or PHIL 301 meets the philosophy requirement', r['Required Courses'].rules[0] === 'met:Philosophy requirement: either PHIL 300 or PHIL 301', JSON.stringify(r['Required Courses'].rules));
+  r = await run('BAPSY', psy, ['PSY 303', 'PSY 305', 'PSY 306', 'PSY 311', 'PSY 443']);
+  check('BAPSY area: 5 PSY courses, 1 of them 4XX — both rules still open', JSON.stringify(r['Area Electives'].rules) === '["planned:At least 6 PSY-coded courses — 5/6","planned:At least 2 courses from PSY 4XX — 1/2"]', JSON.stringify(r['Area Electives'].rules));
+  r = await run('BAPSY', psy, ['PSY 303', 'PSY 305', 'PSY 306', 'PSY 311', 'PSY 443', 'PSY 452']);
+  check('…6 PSY courses with two 4XX meet both', r['Area Electives'].rules.every((x) => x.startsWith('met:')), JSON.stringify(r['Area Electives'].rules));
+
+  const vacd = [
+    { name: 'Required Courses', kind: 'required', credits: 15, courses: ['VA 201', 'VA 203', 'VA 300', 'VA 301', 'VA 303', 'VA 401', 'VA 403'] },
+    { name: 'Core Electives II (Skill Courses)', kind: 'core', credits: 12, courses: ['VA 202', 'VA 302', 'VA 304', 'VA 402', 'VA 404'] }];
+  r = await run('BAVACD', vacd, ['PROJ 300', 'VA 303', 'VA 401']);
+  check('BAVACD required: PROJ 300 stands in for VA 300, VA 303 for VA 301, VA 401 for itself', JSON.stringify(r['Required Courses'].rules.map((x) => x.split(':')[0])) === '["met","met","met"]' && r['Required Courses'].matches.length === 3, JSON.stringify(r['Required Courses']));
+  r = await run('BAVACD', vacd, ['VA 301', 'VA 303']);
+  check('…taking both VA 301 and VA 303 counts only one', r['Required Courses'].matches.join() === 'VA 301', JSON.stringify(r['Required Courses'].matches));
+  r = await run('BAVACD', vacd, ['VA 302', 'VA 304', 'VA 402']);
+  check('BAVACD skill electives: VA 302 + VA 304 warned, VA 402 alone fine', JSON.stringify(r['Core Electives II (Skill Courses)'].rules.map((x) => x.split(':')[0])) === '["bad","met"]' && r['Core Electives II (Skill Courses)'].matches.join() === 'VA 302,VA 402', JSON.stringify(r['Core Electives II (Skill Courses)']));
+
+  console.log(log.join('\n')); console.log('errors:', errs.length ? errs : 'none');
+  await b.close();
+  return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;
+}
+
 async function minorsTest() {
   const log = []; const check = (n, ok, x = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${n}${x ? ' — ' + x : ''}`);
   const b = await chromium.launch(launchOptions());
@@ -353,6 +438,7 @@ async function minorsTest() {
     failed += await doubleMajorTest();
     failed += await minorsTest();
     failed += await rulesTest();
+    failed += await deptRulesTest();
     failed += await todayTest();
   } finally {
     teardown();
