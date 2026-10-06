@@ -40,6 +40,41 @@ NOT_HOLIDAY = ("telafi",)          # make-up class days are working days
 DATE_RE = re.compile(r"(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\s+([A-Za-zÇĞİÖŞÜçğıöşü]{3,9})\.?(?:\s+(\d{4}))?")
 
 
+LONG_MONTHS = {"ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5, "haziran": 6, "temmuz": 7,
+               "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12}
+_MONTH_PAT = "|".join(LONG_MONTHS)
+SRC_RE = re.compile(rf"(\d{{1,2}})\s+({_MONTH_PAT})", re.I)
+WINDOW_RE = re.compile(rf"(\d{{1,2}})\s+({_MONTH_PAT})\s+(\d{{1,2}})[:.](\d{{2}})\s*[-–]\s*(\d{{1,2}})[:.](\d{{2}})", re.I)
+AFTER_RE = re.compile(rf"(\d{{1,2}})\s+({_MONTH_PAT})\s+(\d{{1,2}})[:.](\d{{2}})\s*['’]?\s*(?:ten|tan|den|dan)\s+sonra", re.I)
+
+
+def parse_makeup(label: str, date_iso: str) -> dict | None:
+    """'28 Ekim Çarşamba Günü ve 10 Kasım Salı Günü Derslerinin Telafisi (Yarım Gün) Not: 28 Ekim 12:40'tan sonra
+    başlayan ve 10 Kasım 8:40-10:30 derslerin telafisi ...' on 24 Eki -> {date, source: [{date, from?, to?}]}."""
+    main, _, note = label.partition("Not:")
+    made = dt.date.fromisoformat(date_iso)
+    windows: dict[tuple[int, int], dict] = {}
+    for m in WINDOW_RE.finditer(note):
+        windows[(int(m.group(1)), LONG_MONTHS[m.group(2).lower()])] = {
+            "from": f"{int(m.group(3)):02d}:{m.group(4)}", "to": f"{int(m.group(5)):02d}:{m.group(6)}"}
+    for m in AFTER_RE.finditer(note):
+        windows[(int(m.group(1)), LONG_MONTHS[m.group(2).lower()])] = {"from": f"{int(m.group(3)):02d}:{m.group(4)}"}
+    sources = []
+    for m in SRC_RE.finditer(main):
+        day, month = int(m.group(1)), LONG_MONTHS[m.group(2).lower()]
+        best = None
+        for year in (made.year - 1, made.year, made.year + 1):          # the replaced day is the one nearest the make-up day
+            try:
+                cand = dt.date(year, month, day)
+            except ValueError:
+                continue
+            if best is None or abs((cand - made).days) < abs((best - made).days):
+                best = cand
+        if best:
+            sources.append({"date": best.isoformat(), **windows.get((day, month), {})})
+    return {"date": date_iso, "source": sources} if sources else None
+
+
 def upper_tr(text: str) -> str:
     return text.replace("i", "İ").replace("ı", "I").upper()
 
@@ -98,6 +133,8 @@ def parse_calendar(html: str, level: str = "LİSANS") -> dict:
         return cells[column] if column < len(cells) else ""
 
     starts, ends, exams, holidays, registrations, add_drops = [], [], [], [], [], []
+    makeups: list[dict] = []
+    day_names: dict[str, str] = {}
     for label, cells in rows:
         flat = upper_tr(label)
         dates = parse_dates(value(cells))
@@ -113,6 +150,12 @@ def parse_calendar(html: str, level: str = "LİSANS") -> dict:
             registrations.append((dates[0], dates[-1]))
         elif flat.startswith(upper_tr(ADD_DROP)):
             add_drops.append((dates[0], dates[-1]))
+        elif "telafi" in label.lower():
+            made = parse_makeup(label, dates[0])
+            if made:
+                makeups.append(made)
+        elif "anma" in label.lower() and len(dates) == 1:
+            day_names[dates[0]] = re.sub(r"\s*\(.*?\)\s*", " ", label.split("Not:")[0]).strip(" .")
         elif any(h in label.lower() for h in HOLIDAY_HINTS) and not any(n in label.lower() for n in NOT_HOLIDAY):
             name = re.sub(r"\s*\(.*?\)\s*", " ", label.split("Not:")[0].split("/")[0]).strip(" .")
             span = (dt.date.fromisoformat(dates[0]), dt.date.fromisoformat(dates[-1]))
@@ -121,8 +164,14 @@ def parse_calendar(html: str, level: str = "LİSANS") -> dict:
                 if not any(h["date"] == day.isoformat() for h in holidays):
                     holidays.append({"date": day.isoformat(), "name": name})
                 day += dt.timedelta(days=1)
+    partial = []                      # a day that is only partly off: the classes starting inside the window don't run
+    for made in makeups:
+        for src in made["source"]:
+            if "from" in src or "to" in src:
+                partial.append({"date": src["date"], "from": src.get("from", "00:00"), "to": src.get("to", "23:59"),
+                                "name": day_names.get(src["date"], "Yarım gün tatil")})
     return {"starts": starts, "ends": ends, "exams": exams, "holidays": holidays,
-            "registrations": registrations, "addDrops": add_drops}
+            "registrations": registrations, "addDrops": add_drops, "makeups": makeups, "partial": partial}
 
 
 def terms_from(parsed: dict, year: int) -> list[dict]:
@@ -159,7 +208,14 @@ def terms_from(parsed: dict, year: int) -> list[dict]:
         drops = [r for r in parsed.get("addDrops", []) if start <= r[0] <= end]
         if drops:
             entry["addDropStart"], entry["addDropEnd"] = drops[0]
-        entry["holidays"] = [h for h in parsed["holidays"] if start <= h["date"] <= (entry.get("examsEnd") or end)]
+        last_day = entry.get("examsEnd") or end
+        entry["holidays"] = [h for h in parsed["holidays"] if start <= h["date"] <= last_day]
+        makeups = [m for m in parsed.get("makeups", []) if start <= m["date"] <= last_day]
+        if makeups:
+            entry["makeups"] = makeups
+        partial = [x for x in parsed.get("partial", []) if start <= x["date"] <= last_day]
+        if partial:
+            entry["partial"] = partial
         out.append(entry)
     return out
 

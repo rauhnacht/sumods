@@ -2810,16 +2810,34 @@ const holidayGreeting = (name) => (/bayram/i.test(name || '') ? `${String(name).
 
 /** What a given date holds: the weekly classes (not on a holiday or outside the term's class dates), your own events,
  * and any finals that fall on it. */
+const hmToMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
+const inWindow = (b, w) => b.start >= hmToMin(w.from || '00:00') && b.start < hmToMin(w.to || '24:00');
+const windowText = (w) => (w.from && w.to ? ` ${w.from}–${w.to}` : w.from ? ` from ${w.from}` : w.to ? ` until ${w.to}` : '');
+
 function dayPlan(iso, all, finals) {
   const cal = App.calendar;
   const holiday = ((cal && cal.holidays) || []).find((h) => h.date === iso) || null;
+  const partial = ((cal && cal.partial) || []).filter((p) => p.date === iso);          // only some hours off (28 Oct afternoon, 10 Nov morning)
+  const makeups = ((cal && cal.makeups) || []).filter((m) => m.date === iso);            // a Saturday that replaces other days' classes
   const inTerm = !cal || !cal.classesStart || !cal.classesEnd || (iso >= cal.classesStart && iso <= cal.classesEnd);
   const wd = weekdayOf(iso);
-  const blocks = all.filter((b) => b.day === wd && (b.kind === 'custom' || inTerm))
-    .map((b) => (holiday && b.kind !== 'custom' ? { ...b, off: true } : b))
-    .sort((a, b) => a.start - b.start);
+  const own = all.filter((b) => b.day === wd && (b.kind === 'custom' || inTerm)).map((b) => {
+    if (b.kind === 'custom') return b;
+    if (holiday) return { ...b, off: true };
+    const p = partial.find((x) => inWindow(b, x));
+    return p ? { ...b, off: true, offNote: p.name } : b;
+  });
+  const extra = [];
+  for (const m of makeups) {
+    for (const src of m.source || []) {
+      all.filter((b) => b.kind !== 'custom' && b.day === weekdayOf(src.date) && inWindow(b, src))
+        .forEach((b) => extra.push({ ...b, makeup: src.date }));
+    }
+  }
+  const blocks = [...own, ...extra].sort((a, b) => a.start - b.start);
   const exams = finals.filter(({ exam }) => exam.date === iso);
-  return { iso, wd, holiday, inTerm, blocks, exams, empty: !blocks.length && !holiday && !exams.length };
+  return { iso, wd, holiday, partial, makeups, inTerm, blocks, exams,
+    empty: !blocks.length && !holiday && !exams.length && !makeups.length && !partial.length };
 }
 
 function renderToday() {
@@ -2841,11 +2859,12 @@ function renderToday() {
   };
   const classRow = (b, live) => {
     const s = b.off ? { label: 'holiday', cls: 'off' } : live ? status(b) : { label: '', cls: '' };
+    const tag = b.makeup ? `<span class="today-tag">make-up for ${esc(dayLabel(b.makeup))}</span>` : '';
     return `<div class="today-row ${s.cls}">
       <span class="today-time">${esc(hhmm(b.start))}<small>${esc(hhmm(b.end))}</small></span>
       <span class="today-main">
         <span class="today-code c${b.color}">${esc(b.code)}${b.group && b.group !== '0' ? ` ${esc(b.group)}` : ''}</span>
-        ${b.where ? `<span class="today-where">${esc(b.where)}</span>` : ''}
+        ${b.where ? `<span class="today-where">${esc(b.where)}</span>` : ''}${tag}
       </span>
       <span class="today-status">${esc(s.label)}</span>
     </div>`;
@@ -2873,6 +2892,11 @@ function renderToday() {
     if (d.holiday) {
       const hi = holidayGreeting(d.holiday.name);
       body = `<p class="day-note holiday">${fitIcon('party')} Holiday · ${esc(d.holiday.name)}${hi ? ` — ${esc(hi)}` : ''}</p>`;
+    } else if (d.makeups.length || d.partial.length) {
+      const notes = [];
+      d.partial.forEach((p) => notes.push(`<p class="day-note holiday">${fitIcon('party')} ${esc(p.name)} — classes${esc(windowText(p))} are off</p>`));
+      d.makeups.forEach((m) => notes.push(`<p class="day-note makeup">Make-up day: runs ${(m.source || []).map((x) => `${esc(dayLabel(x.date))}${esc(windowText(x))}`).join(' and ')} classes${d.blocks.some((b) => b.makeup) ? '' : ' (none of yours)'}</p>`));
+      body = notes.join('');
     } else if (d.empty) {
       body = `<p class="day-note">${d.inTerm || !cal ? 'No classes' : `No classes — ${esc(cal.name || 'this term')} runs ${esc(fmtDate(cal.classesStart))} – ${esc(fmtDate(cal.classesEnd))}`}</p>`;
     } else {

@@ -19,5 +19,15 @@
    "date": "2027-07-15",
    "name": "Demokrasi ve Milli Birlik Günü"
   }
+ ],
+ "makeups": [
+  {
+   "date": "2027-07-24",
+   "source": [
+    {
+     "date": "2027-07-15"
+    }
+   ]
+  }
  ]
 }

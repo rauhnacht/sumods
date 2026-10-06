@@ -749,3 +749,6 @@ footer a { color: inherit; }
 .today-row.off { opacity: .55; }
 .today-row.off .today-code { text-decoration: line-through; }
 .today-row.off .today-status { color: var(--accent); font-weight: 600; }
+
+.today-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 11px; color: var(--accent); background: var(--accent-soft); }
+.day-note.makeup { color: var(--accent); }

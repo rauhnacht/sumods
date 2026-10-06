@@ -227,6 +227,26 @@ async function todayTest() {
   check('days with nothing say so in one line', cards.some((c) => c.quiet && /No classes|Weekend|Holiday/.test(c.text)));
   await p.locator('#today-more').click(); await p.waitForTimeout(200);
   check('"Show the next 7 days" extends the list', (await p.locator('#today-body .day-card').count()) > cards.length);
+  const partialTest = await p.evaluate(() => {
+    const all = planBlocks().filter((b) => b.kind !== 'custom');
+    const b = all[0];
+    if (!b) return { skip: true };
+    const today = istanbulToday();
+    const next = (wd) => { let i = 1; while (weekdayOf(addDaysISO(today, i)) !== wd) i += 1; return addDaysISO(today, i); };
+    const src = next(b.day);                           // a day that has class b
+    const sat = next(5);
+    const t = `${String(Math.floor(b.start / 60)).padStart(2, '0')}:${String(b.start % 60).padStart(2, '0')}`;
+    App.calendar = { classesStart: addDaysISO(today, -30), classesEnd: addDaysISO(today, 60), holidays: [],
+      partial: [{ date: src, from: t, name: 'Half day' }], makeups: [{ date: sat, source: [{ date: src, from: t }] }] };
+    const d = dayPlan(src, planBlocks(), []);
+    const m = dayPlan(sat, planBlocks(), []);
+    store.view = 'today'; App.todayDays = 14; renderToday();
+    const saturdayCard = [...document.querySelectorAll('#today-body .day-card')].find((c) => /Make-up day/.test(c.textContent));
+    return { off: d.blocks.filter((x) => x.off).length, kept: d.blocks.filter((x) => !x.off && x.start >= b.start).length,
+      makeup: m.blocks.filter((x) => x.makeup === src).length, empty: m.empty, card: !!saturdayCard, tag: !!(saturdayCard && saturdayCard.querySelector('.today-tag')) };
+  });
+  check('classes inside a half-day window are marked holiday, the rest stay', partialTest.skip || (partialTest.off >= 1 && partialTest.kept === 0), JSON.stringify(partialTest));
+  check('a make-up Saturday brings in that day\'s classes with a tag and a note', partialTest.skip || (partialTest.makeup >= 1 && partialTest.empty === false && partialTest.card && partialTest.tag), JSON.stringify(partialTest));
   await setup({ stale: true });
   check('a forecast older than three days is not shown', (await p.locator('#today-body .day-wx').count()) === 0);
   const wide = await p.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);

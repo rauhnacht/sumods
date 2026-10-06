@@ -20,4 +20,13 @@ assert spring["holidays"][0]["name"] == "Ramazan Bayramı Tatili", spring["holid
 assert (fall["examsStart"], fall["examsEnd"]) == ("2027-01-04", "2027-01-13"), fall
 assert (spring["examsStart"], spring["examsEnd"]) == ("2027-05-29", "2027-06-08"), spring
 assert summer["holidays"] == [], summer
+# make-up days and half-day holidays
+assert fall["makeups"][0] == {"date": "2026-10-24", "source": [{"date": "2026-10-28", "from": "12:40"},
+                                                              {"date": "2026-11-10", "from": "08:40", "to": "10:30"}]}, fall["makeups"]
+assert [m["date"] for m in fall["makeups"]] == ["2026-10-24", "2026-10-31", "2026-12-26"], fall["makeups"]
+assert fall["makeups"][2]["source"] == [{"date": "2027-01-01"}], "a make-up before the holiday names the date after it"
+assert fall["partial"] == [{"date": "2026-10-28", "from": "12:40", "to": "23:59", "name": "Yarım gün tatil"},
+                           {"date": "2026-11-10", "from": "08:40", "to": "10:30", "name": "Atatürk'ü Anma Töreni"}], fall["partial"]
+assert [m["date"] for m in spring["makeups"]] == ["2027-03-20", "2027-03-06"], spring.get("makeups")
+assert "makeups" not in summer
 print("calendar parser: ok")
