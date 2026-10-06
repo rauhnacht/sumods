@@ -319,6 +319,15 @@ async function deptRulesTest() {
   r = await run('BSDSA', [fac(FAC)], ['CS 201', 'ECON 201']);
   check('BSDSA faculty: one from each pool — SBS still open', JSON.stringify(r['Faculty Courses'].rules.map((x) => x.split(':')[0])) === '["met","met","open"]', JSON.stringify(r['Faculty Courses'].rules));
 
+  r = await run('BSEE', [fac(FAC)], ['MATH 201', 'MATH 202', 'CS 201', 'ENS 201']);
+  check('BSEE faculty: same FENS rules as the other engineering programmes', r['Faculty Courses'].rules.length === 2 && r['Faculty Courses'].rules.every((x) => x.startsWith('met:')), JSON.stringify(r['Faculty Courses'].rules));
+  const eeArea = { name: 'Area Electives', kind: 'area', credits: 9, courses: ['CS 300', 'EE 48011', 'EE 401', 'CS 401'] };
+  r = await run('BSEE', [eeArea], ['EE 401']);
+  check('BSEE area: the special-courses condition is open with only EE 401', /^open:At least 1 course from CS 300/.test(r['Area Electives'].rules[0]), JSON.stringify(r['Area Electives'].rules));
+  r = await run('BSEE', [eeArea], ['EE 401', 'EE 48011']);
+  check('…and met by an EE 48XXX special topics course', /^met:At least 1 course from CS 300/.test(r['Area Electives'].rules[0]), JSON.stringify(r['Area Electives'].rules));
+  check('…with the degree page note attached', /Special Topics/.test(r['Area Electives'].note));
+
   const dsaCore = { name: 'Core Electives', kind: 'core', credits: 27, courses: ['CS 306', 'CS 404', 'EE 311', 'ECON 401', 'PSY 306', 'ECON 494', 'OPIM 402', 'MKTG 401', 'ORG 405', 'IE 405', 'OPIM 410'] };
   const dsaArea = { name: 'Area Electives', kind: 'area', credits: 12, courses: ['IE 405', 'OPIM 410', 'CS 300'] };
   r = await run('BSDSA', [dsaCore, dsaArea], ['CS 306', 'CS 404', 'EE 311', 'ECON 401', 'PSY 306', 'ECON 494', 'OPIM 402', 'MKTG 401', 'ORG 405']);

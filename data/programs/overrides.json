@@ -102,7 +102,8 @@
     "BSMS",
     "BSMAT",
     "BSME",
-    "BSBIO"
+    "BSBIO",
+    "BSEE"
    ],
    "group": "faculty",
    "groupNote": "In line with the conditions stated by the Faculties, a total of at least 5 courses should be completed from FENS Faculty Courses and/or FASS, SBS Faculty Courses. At least 2 of these courses must be MATH coded. In addition, at least 3 of these courses must be from the pool of FENS Faculty Courses. These courses may be taken while fulfilling the degree requirements for the program.",
@@ -427,6 +428,19 @@
       "VA 404"
      ],
      "max": 1
+    }
+   ]
+  },
+  {
+   "program": "BSEE",
+   "group": "area",
+   "groupNote": "Minimum 9 SU credits from the area electives pool below. At least one course should be from CS 300, CS 401, CS 412, ME 303, PHYS 302, PHYS 303 and the EE 48XXX \"Special Topics\" courses. The extra courses taken from this pool are directly counted towards Free Elective requirements.",
+   "rules": [
+    {
+     "label": "At least 1 course from CS 300, CS 401, CS 412, ME 303, PHYS 302, PHYS 303 or EE 48XXX (Special Topics)",
+     "match": "^(CS 300|CS 401|CS 412|ME 303|PHYS 302|PHYS 303|EE 48\\d{3})$",
+     "min": 1,
+     "within": "group"
     }
    ]
   }
