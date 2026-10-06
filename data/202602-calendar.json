@@ -5,15 +5,9 @@
  "classesStart": "2027-02-15",
  "classesEnd": "2027-05-28",
  "source": "https://www.sabanciuniv.edu/tr/akademik-takvim?b=2026&c=16&d=tr",
-<<<<<<< HEAD
- "updated": "2026-10-06T11:14:58Z",
- "examsStart": "2027-01-14",
- "examsEnd": "2027-01-16",
-=======
  "updated": "2026-10-06T11:06:02Z",
  "examsStart": "2027-05-29",
  "examsEnd": "2027-06-08",
->>>>>>> dc013e1 (today: outfit ideas, weekend icon, holiday-marked classes, bayram greetings; calendar scraper fixes)
  "registrationDays": [
   "2027-02-10",
   "2027-02-11",
