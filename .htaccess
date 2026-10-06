@@ -1,0 +1,4 @@
+# Send every http:// request to https:// (the site has a certificate; see README, hosting).
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
