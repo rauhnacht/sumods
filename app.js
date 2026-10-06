@@ -2102,7 +2102,16 @@ function requirementProgress(program) {
       // credit/count/any/match-driven electives: listed courses first so they aren't crowded
       // out of their own area by overflow from other groups
       const listed = flatCourseCodes(group.courses);
-      const ordered = planned.slice().sort((a, b) => Number(listed.includes(b.code)) - Number(listed.includes(a.code)));
+      // a course one of this group's own conditions asks for (BSEE area: "at least 1 of CS 300, CS 401, … EE 48XXX") is placed
+      // first, so it can't be pushed out to the free electives by other courses that already fill the group's credits
+      const wanted = (course) => (group.rules || []).some((rule) => {
+        if (rule.within !== 'group') return false;
+        if (rule.each) return rule.each.includes(subject(course.code));
+        const test = predicate(rule);
+        return !!test && test(course);
+      });
+      const rank = (c) => (listed.includes(c.code) ? 1 : 0) + (wanted(c) ? 2 : 0);
+      const ordered = planned.slice().sort((a, b) => rank(b) - rank(a));
       for (const course of ordered) {
         if (used.has(course.code) || !passed(course) || blocked(course) || !accepts(group, course) || full(group, matches)) continue;
         matches.push({ ...course, credits: creditsOf(course, group), ects: ectsOf(course) });

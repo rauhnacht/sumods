@@ -72,8 +72,8 @@ PROGRAMS = {
 DM = "-DM"        # P_PROGRAM=BSCS-DM is the double-major version of BSCS's requirements
 
 # Programmes that did not exist before some entry term: nothing earlier is fetched, and anything stored earlier is dropped.
-# Data Science and Analytics (BSDSA, also as a double major) takes its first students in Fall 2025-2026.
-FIRST_ENTRY = {"BSDSA": "202501", "BSDSA-DM": "202501"}
+# The Data Science and Analytics double major (BSDSA-DM) takes its first students in Fall 2025-2026; the main programme goes back to 2019.
+FIRST_ENTRY = {"BSDSA-DM": "202501"}
 
 # Minors: P_PROGRAM=PHIL-MINOR. Their page has the same layout as a major's, but the course lists sit on the
 # page itself (no p_list_courses links) and there are no university / free / faculty areas.

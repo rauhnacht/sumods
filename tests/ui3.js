@@ -324,6 +324,10 @@ async function deptRulesTest() {
   const eeArea = { name: 'Area Electives', kind: 'area', credits: 9, courses: ['CS 300', 'EE 48011', 'EE 401', 'CS 401'] };
   r = await run('BSEE', [eeArea], ['EE 401']);
   check('BSEE area: the special-courses condition is open with only EE 401', /^open:At least 1 course from CS 300/.test(r['Area Electives'].rules[0]), JSON.stringify(r['Area Electives'].rules));
+  const eeBusy = { name: 'Area Electives', kind: 'area', credits: 9, courses: ['EE 401', 'EE 402', 'EE 403', 'EE 48011'] };
+  r = await run('BSEE', [eeBusy], ['EE 401', 'EE 402', 'EE 403', 'EE 48011']);
+  check('BSEE area: the special-topics course still lands in the area when 9 credits of other area courses are already in the plan',
+    /^met:At least 1 course from CS 300/.test(r['Area Electives'].rules[0]) && r['Area Electives'].matches.includes('EE 48011'), JSON.stringify(r['Area Electives']));
   r = await run('BSEE', [eeArea], ['EE 401', 'EE 48011']);
   check('…and met by an EE 48XXX special topics course', /^met:At least 1 course from CS 300/.test(r['Area Electives'].rules[0]), JSON.stringify(r['Area Electives'].rules));
   check('…with the degree page note attached', /Special Topics/.test(r['Area Electives'].note));
