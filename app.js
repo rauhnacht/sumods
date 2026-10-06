@@ -2757,6 +2757,57 @@ const dayLabel = (iso, weekday = true) => {
   return `${weekday ? `${DAYS[weekdayOf(iso)]} ` : ''}${d.getUTCDate()} ${d.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' })}`;
 };
 
+/* ------------------------------------------------ outfit ideas and celebrations (Today tab) */
+
+const FIT_ICONS = {
+  umbrella: '<path d="M3 12a9 9 0 0118 0z"/><path d="M12 12v6.5a2 2 0 01-4 0M12 3v1"/>',
+  shades: '<path d="M2 9h20"/><path d="M4 9l1 6a2.5 2.5 0 005 0l.5-3.5h3L14 15a2.5 2.5 0 005 0l1-6"/>',
+  tee: '<path d="M8 4L3 7l2 4 3-1v10h8V10l3 1 2-4-5-3a4 4 0 01-8 0z"/>',
+  coat: '<path d="M9 3L5 6v15h5V12M15 3l4 3v15h-5V12M9 3l3 4 3-4M12 7v14"/>',
+  boot: '<path d="M8 3h6v8l5 3.5V19H7a1 1 0 01-1-1V3z"/>',
+  dress: '<path d="M9 3h6l-1 6 5 12H5l5-12z"/>',
+  party: '<path d="M4 20l4-12 8 8z"/><path d="M13 5v2M18 9h2M17 4l-1 1.5M20 14l-1.5.5M11 11l2 2"/>',
+};
+const fitIcon = (name) => `<svg class="fit-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${FIT_ICONS[name]}</svg>`;
+
+const FITS = {
+  snow:  { icons: ['coat', 'boot'], text: ['Puffer coat, scarf and waterproof boots', 'Thick knit under a long wool coat, boots on', 'Layers, beanie and warm lined boots'] },
+  rain:  { icons: ['umbrella', 'boot'], text: ['Trench coat, umbrella and boots', 'Waterproof jacket over jeans, sneakers you don\'t love', 'Long raincoat, a dress with tights and an umbrella'] },
+  cold:  { icons: ['coat'], text: ['Long wool coat, turtleneck and scarf', 'Puffer jacket, knit dress and boots', 'Layered knits, a warm coat and a beanie'] },
+  cool:  { icons: ['coat', 'dress'], text: ['Leather jacket, jeans and boots', 'Cardigan over a midi skirt with tights', 'Trench coat, sweater and straight trousers', 'Blazer, hoodie and sneakers'] },
+  mild:  { icons: ['tee', 'dress'], text: ['Light cardigan, tee and wide-leg jeans', 'Shirt dress with a denim jacket', 'Knit vest, shirt and loafers', 'Hoodie, skirt and sneakers'] },
+  warm:  { icons: ['tee', 'dress'], text: ['Linen shirt and light trousers', 'Sundress and white sneakers', 'Tee, denim shorts and sandals', 'Flowy skirt with a crop top'] },
+  hot:   { icons: ['shades', 'dress'], text: ['Breezy sundress, sunglasses and sunscreen', 'Linen shorts and a tank top, sandals on', 'Light cotton set, hat and a water bottle'] },
+};
+
+/** A short outfit idea for the forecast of one date: the same one every time that date is drawn, a different one on other days. */
+function outfitFor(iso) {
+  const w = weatherFor(iso);
+  if (!w || w.max === null || w.max === undefined) return null;
+  const wet = w.code === 'rain' || w.code === 'storm';
+  const season = [0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 0][Number(iso.slice(5, 7)) - 1];       // 0 winter, 1 spring, 2 summer, 3 autumn
+  const t = w.max;
+  let key = w.code === 'snow' ? 'snow' : wet && t < 24 ? 'rain' : t < 9 ? 'cold' : t < 16 ? 'cool' : t < 23 ? 'mild' : t < 30 ? 'warm' : 'hot';
+  if (season === 2 && key === 'cool') key = 'mild';
+  const set = FITS[key];
+  let h = 7;
+  for (const ch of iso) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  let icons = set.icons.slice();
+  if (w.code === 'wind' && icons.length < 2) icons.push('coat');
+  if (wet && key !== 'rain') icons = ['umbrella', ...icons].slice(0, 2);
+  if (!wet && (w.code === 'sun' || w.code === 'partly') && t >= 20 && !icons.includes('shades')) icons = [...icons.slice(0, 1), 'shades'];
+  return { icons, text: set.text[h % set.text.length] };
+}
+
+const fitLine = (iso) => {
+  const f = outfitFor(iso);
+  return f ? `<p class="day-fit">${f.icons.map(fitIcon).join('')}<span>${esc(f.text)}</span></p>` : '';
+};
+
+/** "Ramazan Bayramı Tatili" -> "Ramazan Bayramı kutlu olsun!" — only for the bayrams. */
+const holidayGreeting = (name) => (/bayram/i.test(name || '') ? `${String(name).replace(/\s*Tatili\s*$/i, '')} kutlu olsun!` : '');
+
 /** What a given date holds: the weekly classes (not on a holiday or outside the term's class dates), your own events,
  * and any finals that fall on it. */
 function dayPlan(iso, all, finals) {
@@ -2764,7 +2815,8 @@ function dayPlan(iso, all, finals) {
   const holiday = ((cal && cal.holidays) || []).find((h) => h.date === iso) || null;
   const inTerm = !cal || !cal.classesStart || !cal.classesEnd || (iso >= cal.classesStart && iso <= cal.classesEnd);
   const wd = weekdayOf(iso);
-  const blocks = all.filter((b) => b.day === wd && (b.kind === 'custom' || (!holiday && inTerm)))
+  const blocks = all.filter((b) => b.day === wd && (b.kind === 'custom' || inTerm))
+    .map((b) => (holiday && b.kind !== 'custom' ? { ...b, off: true } : b))
     .sort((a, b) => a.start - b.start);
   const exams = finals.filter(({ exam }) => exam.date === iso);
   return { iso, wd, holiday, inTerm, blocks, exams, empty: !blocks.length && !holiday && !exams.length };
@@ -2788,7 +2840,7 @@ function renderToday() {
     return { label: wait < 90 ? `in ${durText(wait)}` : `at ${hhmm(b.start)}`, cls: '' };
   };
   const classRow = (b, live) => {
-    const s = live ? status(b) : { label: '', cls: '' };
+    const s = b.off ? { label: 'holiday', cls: 'off' } : live ? status(b) : { label: '', cls: '' };
     return `<div class="today-row ${s.cls}">
       <span class="today-time">${esc(hhmm(b.start))}<small>${esc(hhmm(b.end))}</small></span>
       <span class="today-main">
@@ -2811,22 +2863,24 @@ function renderToday() {
     // Saturday + Sunday with nothing on either: one quiet "Weekend" card
     const next = plans[i + 1];
     if (d.wd === 5 && next && next.wd === 6 && d.empty && next.empty) {
-      cards.push(`<section class="day-card quiet"><header class="day-head"><h3>Weekend</h3><span class="day-date">${esc(dayLabel(d.iso))} – ${esc(dayLabel(next.iso))}</span>
-        <span class="day-wxs">${wxChip(d.iso)}${wxChip(next.iso)}</span></header></section>`);
+      cards.push(`<section class="day-card quiet"><header class="day-head"><h3>Weekend</h3><span class="day-party" title="It's the weekend">${fitIcon('party')}</span><span class="day-date">${esc(dayLabel(d.iso))} – ${esc(dayLabel(next.iso))}</span>
+        <span class="day-wxs">${wxChip(d.iso)}${wxChip(next.iso)}</span></header>${fitLine(d.iso)}</section>`);
       i += 1;
       continue;
     }
     const cal = App.calendar;
     let body;
     if (d.holiday) {
-      body = `<p class="day-note holiday">Holiday · ${esc(d.holiday.name)}</p>`;
+      const hi = holidayGreeting(d.holiday.name);
+      body = `<p class="day-note holiday">${fitIcon('party')} Holiday · ${esc(d.holiday.name)}${hi ? ` — ${esc(hi)}` : ''}</p>`;
     } else if (d.empty) {
       body = `<p class="day-note">${d.inTerm || !cal ? 'No classes' : `No classes — ${esc(cal.name || 'this term')} runs ${esc(fmtDate(cal.classesStart))} – ${esc(fmtDate(cal.classesEnd))}`}</p>`;
     } else {
       body = '';
     }
-    cards.push(`<section class="day-card${i === 0 ? ' is-today' : ''}${d.empty || d.holiday ? ' quiet' : ''}">
-      <header class="day-head"><h3>${esc(title)}</h3><span class="day-date">${esc(dayLabel(d.iso, i < 2))}</span>${wxChip(d.iso) ? `<span class="day-wxs">${wxChip(d.iso)}</span>` : ''}</header>
+    cards.push(`<section class="day-card${i === 0 ? ' is-today' : ''}${d.empty || (d.holiday && !d.blocks.length) ? ' quiet' : ''}${d.holiday ? ' is-holiday' : ''}">
+      <header class="day-head"><h3>${esc(title)}</h3>${d.wd >= 5 ? `<span class="day-party" title="It's the weekend">${fitIcon('party')}</span>` : ''}<span class="day-date">${esc(dayLabel(d.iso, i < 2))}</span>${wxChip(d.iso) ? `<span class="day-wxs">${wxChip(d.iso)}</span>` : ''}</header>
+      ${fitLine(d.iso)}
       ${d.blocks.map((b) => classRow(b, i === 0)).join('')}${d.exams.map(examRow).join('')}${body}
     </section>`);
   }

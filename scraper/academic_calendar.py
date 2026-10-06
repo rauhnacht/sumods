@@ -35,7 +35,8 @@ CLASSES_END = "DERSLERİN SONA ERMESİ"
 EXAMS = "DÖNEM SONU SINAVLARI"
 REGISTRATION = "DERS KAYITLARI"
 ADD_DROP = "DERS EKLEME-BIRAKMA"
-HOLIDAY_HINTS = ("resmi tatil", "yeni yıl tatili", "bayramı tatili", "dönem içi tatili")
+HOLIDAY_HINTS = ("resmi tatil", "yeni yıl tatili", "bayramı tatili", "dönem içi tatili", "bayram", "tatil")
+NOT_HOLIDAY = ("telafi",)          # make-up class days are working days
 DATE_RE = re.compile(r"(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\s+([A-Za-zÇĞİÖŞÜçğıöşü]{3,9})\.?(?:\s+(\d{4}))?")
 
 
@@ -112,12 +113,13 @@ def parse_calendar(html: str, level: str = "LİSANS") -> dict:
             registrations.append((dates[0], dates[-1]))
         elif flat.startswith(upper_tr(ADD_DROP)):
             add_drops.append((dates[0], dates[-1]))
-        elif any(h in label.lower() for h in HOLIDAY_HINTS):
-            name = re.sub(r"\s*\(.*?\)\s*", " ", label.split("Not:")[0]).strip(" .")
+        elif any(h in label.lower() for h in HOLIDAY_HINTS) and not any(n in label.lower() for n in NOT_HOLIDAY):
+            name = re.sub(r"\s*\(.*?\)\s*", " ", label.split("Not:")[0].split("/")[0]).strip(" .")
             span = (dt.date.fromisoformat(dates[0]), dt.date.fromisoformat(dates[-1]))
             day = span[0]
             while day <= span[1]:
-                holidays.append({"date": day.isoformat(), "name": name})
+                if not any(h["date"] == day.isoformat() for h in holidays):
+                    holidays.append({"date": day.isoformat(), "name": name})
                 day += dt.timedelta(days=1)
     return {"starts": starts, "ends": ends, "exams": exams, "holidays": holidays,
             "registrations": registrations, "addDrops": add_drops}
@@ -137,8 +139,13 @@ def terms_from(parsed: dict, year: int) -> list[dict]:
             "source": CALENDAR_URL.format(year=year),
             "updated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
-        if i < len(parsed["exams"]):
-            entry["examsStart"], entry["examsEnd"] = parsed["exams"][i]
+        # the finals window of a term is the first one that opens within a week of its last class day
+        # (rows are not one-per-term: the page also lists other exam windows)
+        last = dt.date.fromisoformat(end)
+        window = next((x for x in parsed["exams"]
+                       if start < x[0] and dt.date.fromisoformat(x[0]) >= last - dt.timedelta(days=7)), None)
+        if window:
+            entry["examsStart"], entry["examsEnd"] = window
         # registration for a term happens before its classes start: take the last window before them
         before = [r for r in parsed.get("registrations", []) if r[0] <= start]
         if before:

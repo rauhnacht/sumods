@@ -211,7 +211,15 @@ async function todayTest() {
   check('the first two cards are "Today" and "Tomorrow"', cards[0].title === 'Today' && cards[1].title === 'Tomorrow');
   check('at most one "Weekend" card, and only for two quiet days', cards.filter((c) => c.title === 'Weekend').length <= 1 && cards.filter((c) => c.title === 'Weekend').every((c) => / – /.test(c.date)), JSON.stringify(cards.map((c) => c.title)));
   const holiday = cards.find((c) => /Test Bayramı/.test(c.text));
-  check('a holiday shows its name and no classes', !!holiday && /Holiday · Test Bayramı/.test(holiday.text) && !(await p.locator('#today-body .day-card', { hasText: 'Test Bayramı' }).locator('.today-row').count()));
+  check('a holiday shows its name and a bayram greeting', !!holiday && /Holiday · Test Bayramı — Test Bayramı kutlu olsun!/.test(holiday.text), holiday && holiday.text);
+  const hrows = p.locator('#today-body .day-card', { hasText: 'Test Bayramı' }).locator('.today-row');
+  check('classes on a holiday stay listed but are marked "holiday"', (await hrows.count()) === (await hrows.locator('.today-status', { hasText: 'holiday' }).count()), `${await hrows.count()} rows`);
+  const fits = await p.$$eval('#today-body .day-card .day-fit', (n) => n.map((x) => ({ icons: x.querySelectorAll('svg').length, text: x.textContent.trim() })));
+  check('days with a forecast get a short outfit idea with 1-2 icons', fits.length >= 3 && fits.every((f) => f.text.length > 8 && f.icons >= 1 && f.icons <= 2), JSON.stringify(fits.slice(0, 3)));
+  check('a rainy day suggests an umbrella icon', await p.evaluate(() => outfitFor(addDaysISO(istanbulToday(), 2)).icons.includes('umbrella')));
+  check('the same date always gets the same outfit', await p.evaluate(() => { const i = addDaysISO(istanbulToday(), 0); return outfitFor(i).text === outfitFor(i).text; }));
+  check('a day without a forecast gets no outfit', await p.evaluate(() => outfitFor(addDaysISO(istanbulToday(), 4)) === null));
+  check('weekend days carry a celebration icon', await p.evaluate(() => [...document.querySelectorAll('#today-body .day-card')].filter((c) => /^(Weekend|Saturday|Sunday)/.test(c.querySelector('h3').textContent)).every((c) => c.querySelector('.day-party svg'))));
   check('weather chips show the high and low with an icon', await p.locator('#today-body .day-card').first().locator('.day-wx svg').count() === 1 && /21°\s*14°/.test(cards[0].text), cards[0].text);
   check('…and a day with no forecast shows none', (await p.locator('#today-body .day-wx').count()) <= 4);
   const rows = await p.locator('#today-body .today-row').count();
