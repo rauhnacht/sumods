@@ -5,7 +5,7 @@
  "classesStart": "2026-09-28",
  "classesEnd": "2026-12-31",
  "source": "https://www.sabanciuniv.edu/tr/akademik-takvim?b=2026&c=16&d=tr",
- "updated": "2026-10-06T18:22:23Z",
+ "updated": "2026-10-06T19:14:00Z",
  "examsStart": "2027-01-04",
  "examsEnd": "2027-01-13",
  "registrationDays": [
@@ -68,7 +68,7 @@
    "date": "2026-11-10",
    "from": "08:40",
    "to": "10:30",
-   "name": "Atatürk'ü Anma Töreni"
+   "name": "Atatürk'ü Anma Töreni ("
   }
  ]
 }
