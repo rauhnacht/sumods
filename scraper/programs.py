@@ -71,6 +71,10 @@ PROGRAMS = {
 }
 DM = "-DM"        # P_PROGRAM=BSCS-DM is the double-major version of BSCS's requirements
 
+# Programmes that did not exist before some entry term: nothing earlier is fetched, and anything stored earlier is dropped.
+# Data Science and Analytics (BSDSA, also as a double major) takes its first students in Fall 2025-2026.
+FIRST_ENTRY = {"BSDSA": "202501", "BSDSA-DM": "202501"}
+
 # Minors: P_PROGRAM=PHIL-MINOR. Their page has the same layout as a major's, but the course lists sit on the
 # page itself (no p_list_courses links) and there are no university / free / faculty areas.
 MINOR = "-MINOR"
@@ -742,6 +746,9 @@ def main(argv=None) -> int:
         path = out_dir / f"{program}.json"
         store = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {
             "program": program, "name": programme_name(program), "entries": {}}
+        first = FIRST_ENTRY.get(program)
+        if first:
+            store["entries"] = {t: e for t, e in store["entries"].items() if t >= first}
         hashes = {}
         for t, e in store["entries"].items():
             if "sameAs" not in e:
@@ -752,6 +759,8 @@ def main(argv=None) -> int:
         sparse = is_dm or minor                              # these exist only for some entry terms
         misses = 0                                           # consecutive entry terms with no page
         for entry_term in entries:
+            if first and entry_term < first:
+                continue                                    # the programme didn't exist for that cohort
             if time.monotonic() > deadline:
                 print("  budget reached — saving; the next run continues from here")
                 break
