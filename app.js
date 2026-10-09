@@ -327,6 +327,65 @@ function seatBadge(crn) {
   return `<span class="seat ${cls}" title="${s.taken} of ${s.capacity} taken${s.waitRemaining ? `, ${s.waitRemaining} waitlist places` : ''}">${esc(text)}</span>`;
 }
 
+/* ------------------------------------------------------ seat alerts (notify me) */
+
+const alertState = () => (store.alerts || (store.alerts = { topic: '', items: {} }));
+const isWatched = (crn) => !!alertState().items[crn];
+
+async function alertPost(path, payload) {
+  const res = await fetch(`${LIVE_SEATS}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+}
+
+async function toggleAlert(crn, label) {
+  const a = alertState();
+  if (!a.topic) a.topic = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+  try {
+    if (a.items[crn]) {
+      await alertPost('/unwatch', { term: a.items[crn].term, crn, topic: a.topic });
+      delete a.items[crn];
+      toast('Alert removed');
+    } else {
+      if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
+      await alertPost('/watch', { term: App.idx.term, crn, topic: a.topic, label });
+      const row = seatInfo(crn);
+      a.items[crn] = { term: App.idx.term, label, notified: !!(row && row.remaining > 0) };
+      toast('Notification' in window && Notification.permission === 'granted'
+        ? `You'll get a notification when ${label} has a free seat`
+        : `Alert set — allow notifications in your browser, or use the ntfy link under the seats table`);
+    }
+    save();
+  } catch (err) {
+    toast(`Could not change the alert: ${err.message}`);
+  }
+}
+
+let alertTimer = null;
+function startAlertLoop() {
+  if (alertTimer || !LIVE_SEATS) return;
+  alertTimer = setInterval(async () => {
+    const a = alertState();
+    const crns = Object.keys(a.items).filter((c) => a.items[c].term === (App.idx && App.idx.term));
+    if (!crns.length) return;
+    for (let i = 0; i < crns.length; i += 12) await refreshSeats(crns.slice(i, i + 12));
+    let changed = false;
+    crns.forEach((crn) => {
+      const s = seatInfo(crn);
+      const it = a.items[crn];
+      if (!s || !it) return;
+      if (s.remaining > 0 && !it.notified) {
+        it.notified = true; changed = true;
+        const text = `${it.label}: ${s.remaining} seat${s.remaining === 1 ? '' : 's'} just opened`;
+        toast(text, { timeout: 15000 });
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try { const n = new Notification('SUMods: a seat opened', { body: text, tag: `seat-${crn}` }); n.onclick = () => window.focus(); } catch { /* some browsers need a service worker */ }
+        }
+      } else if (s.remaining <= 0 && it.notified) { it.notified = false; changed = true; }
+    });
+    if (changed) save();
+  }, 10000);
+}
+
 /** "Check capacity": a quick seat pass for one course. Live worker if configured; otherwise
  * ask GitHub Actions to run update-seats.yml with just these CRNs (needs the owner's token,
  * kept only in this browser — see Settings). */
@@ -1616,10 +1675,11 @@ function courseDetailHTML(course, { heading = false } = {}) {
     <div class="detail-links">${links.join('')}</div>
     ${App.seats || LIVE_SEATS ? `<p class="seat-note">${esc(seatsStamp())}${LIVE_SEATS ? ' <button type="button" class="btn quiet" id="seats-refresh">Refresh seats</button>'
       : ` <button type="button" class="btn quiet" data-check-seats="${esc(course.components.flatMap((comp) => comp.sections.map((s) => s.crn)).join(' '))}">Check capacity</button>`}</p>` : ''}
+    ${LIVE_SEATS && alertState().topic && Object.keys(alertState().items).length ? `<p class="seat-note muted">Phone alerts: install the ntfy app and subscribe to <a href="https://ntfy.sh/${esc(alertState().topic)}" target="_blank" rel="noopener">ntfy.sh/${esc(alertState().topic)}</a>. Anyone with this link can read your alerts, so keep it private.</p>` : ''}
     ${course.components.map((comp) => `
     <table class="sec-table">
       <caption>${esc(comp.label || 'Sections')} — ${esc(comp.code)}</caption>
-      <tr><th>Section</th><th>When</th><th>Where</th><th>Instructor</th><th>CRN</th>${App.seats || LIVE_SEATS ? '<th>Seats</th>' : ''}<th></th></tr>
+      <tr><th>Section</th><th>When</th><th>Where</th><th>Instructor</th><th>CRN</th>${App.seats || LIVE_SEATS ? '<th>Seats</th>' : ''}<th></th>${LIVE_SEATS ? '<th></th>' : ''}</tr>
       ${comp.sections.map((s) => `<tr>
         <td>${esc(s.group)}</td>
         <td>${s.meetings.length ? s.meetings.map((m) => `${DAYS[m.day]} ${hhmm(m.start)}–${hhmm(m.end)}`).join('<br>') : '<span class="muted">TBA</span>'}</td>
@@ -1628,6 +1688,7 @@ function courseDetailHTML(course, { heading = false } = {}) {
         <td><a href="${esc(bannerURL(s.crn))}" target="_blank" rel="noopener">${esc(s.crn)}</a></td>
         ${App.seats || LIVE_SEATS ? `<td>${seatBadge(s.crn) || '<span class="muted">—</span>'}</td>` : ''}
         <td><a href="${esc(syllabusURL(course, comp, s.group))}" target="_blank" rel="noopener">syllabus</a></td>
+        ${LIVE_SEATS && !course.offTerm ? `<td><button type="button" class="btn quiet alert-btn${isWatched(s.crn) ? ' on' : ''}" data-alert="${esc(s.crn)}" data-label="${esc(`${course.code} ${s.group}`)}" title="Get a notification when a seat opens">${isWatched(s.crn) ? 'Alert on' : 'Notify me'}</button></td>` : ''}
       </tr>`).join('')}
     </table>`).join('')}`;
 }
@@ -4522,6 +4583,12 @@ function bindEvents() {
   });
 
   $('#dlg-course').addEventListener('click', (e) => {
+    const alertBtn = e.target.closest('[data-alert]');
+    if (alertBtn) {
+      const code = $('#course-add').dataset.code;
+      toggleAlert(alertBtn.dataset.alert, alertBtn.dataset.label).then(() => openCourseDialog(code, { keepPolling: true }));
+      return;
+    }
     if (e.target.id === 'seats-refresh') {
       const code = $('#course-add').dataset.code;
       const course = App.idx.byCode.get(code);
@@ -4561,6 +4628,7 @@ function bindEvents() {
     }
     const item = e.target.closest('.cat-item');
     if (!item) return;
+    if (!e.target.closest('.cat-head')) return;   // only the title row opens/closes; clicks inside the details leave it open
     const code = item.dataset.code;
     if (e.target.closest('[data-act="add"]')) {
       if (entry(code)) removeCourse(code); else addCourse(code);
@@ -4756,6 +4824,7 @@ async function boot() {
   loadStore();
   applyTheme();
   bindEvents();
+  startAlertLoop();
   try {
     App.index = await loadIndex();
   } catch (err) {
