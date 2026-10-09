@@ -1,0 +1,19 @@
+[Unit]
+Description=SUMods seat watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sumods
+WorkingDirectory=/opt/sumods
+ExecStart=/opt/sumods/venv/bin/python server/seats_watcher.py --port 8787 --workers 8
+Environment=SEATS_STATE=/var/lib/sumods-seats/watches.json
+StateDirectory=sumods-seats
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
