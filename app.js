@@ -386,37 +386,6 @@ function startAlertLoop() {
   }, 10000);
 }
 
-/** "Check capacity": a quick seat pass for one course. Live worker if configured; otherwise
- * ask GitHub Actions to run update-seats.yml with just these CRNs (needs the owner's token,
- * kept only in this browser — see Settings). */
-async function checkCapacity(crnText) {
-  const crns = crnText.split(/\s+/).filter(Boolean);
-  if (!crns.length) return;
-  const cfg = window.SUMODS_CONFIG || {};
-  const repo = cfg.githubRepo || 'rauhnacht/sumods';
-  const token = (store.prefs.ghToken || '').trim();
-  if (!repo) { toast('No GitHub repo configured for capacity checks'); return; }
-  if (!token) {
-    await copyText(crns.join(' '));
-    window.open(`https://github.com/${repo}/actions/workflows/update-seats.yml`, '_blank', 'noopener');
-    toast('CRNs copied — paste them into “Run workflow”. Add a GitHub token in Settings to do this with one tap.', { timeout: 7000 });
-    return;
-  }
-  toast('Asking GitHub for fresh numbers…', { timeout: 2500 });
-  try {
-    const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/update-seats.yml/dispatches`, {
-      method: 'POST',
-      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
-      body: JSON.stringify({ ref: cfg.githubBranch || 'main', inputs: { crns: crns.join(' ') } }),
-    });
-    if (res.status === 204) toast('Started — fresh seats land in about 2–3 minutes (reload then)', { timeout: 6000 });
-    else if (res.status === 401 || res.status === 403 || res.status === 404) toast('GitHub refused the token — it needs Actions: read & write on the repo', { timeout: 7000 });
-    else toast(`GitHub answered ${res.status}`);
-  } catch {
-    toast('Could not reach GitHub');
-  }
-}
-
 function seatsStamp() {
   const lives = Object.values(App.liveSeats || {});
   const time = lives.length ? lives.map((l) => l.at).sort().pop() : App.seats && App.seats.updated;
@@ -1673,8 +1642,7 @@ function courseDetailHTML(course, { heading = false } = {}) {
     ${prereqGraphSVG(course.code)}
     ${workloadHTML(course)}
     <div class="detail-links">${links.join('')}</div>
-    ${App.seats || LIVE_SEATS ? `<p class="seat-note">${esc(seatsStamp())}${LIVE_SEATS ? ' <button type="button" class="btn quiet" id="seats-refresh">Refresh seats</button>'
-      : ` <button type="button" class="btn quiet" data-check-seats="${esc(course.components.flatMap((comp) => comp.sections.map((s) => s.crn)).join(' '))}">Check capacity</button>`}</p>` : ''}
+    ${App.seats || LIVE_SEATS ? `<p class="seat-note">${esc(seatsStamp())}${LIVE_SEATS ? ' <button type="button" class="btn quiet" id="seats-refresh">Refresh seats</button>' : ''}</p>` : ''}
     ${LIVE_SEATS && alertState().topic && Object.keys(alertState().items).length ? `<p class="seat-note muted">Phone alerts: install the ntfy app and subscribe to <a href="https://ntfy.sh/${esc(alertState().topic)}" target="_blank" rel="noopener">ntfy.sh/${esc(alertState().topic)}</a>. Anyone with this link can read your alerts, so keep it private.</p>` : ''}
     ${course.components.map((comp) => `
     <table class="sec-table">
@@ -3998,15 +3966,6 @@ function renderSettings() {
         <button type="button" class="btn quiet danger" id="set-reset-all">Reset everything</button>
       </div>
     </section>
-    <section class="set-group">
-      <h3>Capacity check</h3>
-      <p class="cat-sub">Optional. A GitHub fine-grained token (Actions: read &amp; write, this repo only) lets “Check capacity” start a quick seat run in one tap. It stays in this browser and is never exported.</p>
-      <div class="set-actions">
-        <input type="password" id="set-token" placeholder="${p.ghToken ? 'Token saved' : 'github_pat_…'}" autocomplete="off" spellcheck="false">
-        <button type="button" class="btn" id="set-token-save">Save</button>
-        ${p.ghToken ? '<button type="button" class="btn quiet danger" id="set-token-clear">Remove</button>' : ''}
-      </div>
-    </section>
     <p class="cat-sub">SUMods · data from Sabancı's public BannerWeb pages · not affiliated with Sabancı University</p>`;
 }
 
@@ -4059,11 +4018,6 @@ function bindSettings() {
     if (option) { applySetting(option.closest('[data-setting]').dataset.setting, option.dataset.value); return; }
     const id = e.target.id;
     if (id === 'set-export') exportBackup();
-    if (id === 'set-token-save') {
-      const v = ($('#set-token').value || '').trim();
-      if (v) { store.prefs.ghToken = v; save(); renderSettings(); toast('Token saved on this device'); }
-    }
-    if (id === 'set-token-clear') { delete store.prefs.ghToken; save(); renderSettings(); toast('Token removed'); }
     if (id === 'set-reshuffle') {
       pushUndo('colours');
       tt().order.forEach((code, i) => { tt().courses[code].color = (i * 3 + Math.floor(Math.random() * COLORS)) % COLORS; });
@@ -4569,11 +4523,6 @@ function bindEvents() {
     toast(result === 'saved' ? 'Calendar file ready — import it into your calendar app'
       : result === 'declined' ? 'Download cancelled'
       : 'Could not save the file here — try the deployed site');
-  });
-
-  document.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-check-seats]');
-    if (b) checkCapacity(b.dataset.checkSeats);
   });
 
   // preview banner
