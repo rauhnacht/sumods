@@ -82,7 +82,7 @@ async function featuresTest() {
   // ---- credits turn red above 20
   for (const c of ['CS 201', 'EE 311', 'MATH 201', 'HUM 207', 'ENS 491', 'DSA 201', 'EE 303']) await add(c);
   await p.evaluate(() => { App.idx.byCode.forEach((c) => { c.credits = 4; }); render(); });
-  const read = async () => ({ total: await p.evaluate(() => tt().order.length * 4), red: await p.locator('.stat.over').count(), text: (await p.locator('.stat', { hasText: 'SU credits' }).first().textContent()).trim() });
+  const read = async () => ({ total: await p.evaluate(() => tt().order.length * 4), red: await p.locator('.stat.over').count(), text: (await p.locator('.stat', { hasText: ' SU' }).first().textContent()).trim() });
   const high = await read();
   check('SU credits go red once over the 20-credit maximum', high.total > 20 && high.red === 1, `${high.text}, red pills: ${high.red}`);
   await p.evaluate(() => { ['DSA 201', 'EE 303', 'ENS 491'].forEach((c) => removeCourse(c)); });
@@ -136,7 +136,7 @@ async function doubleMajorTest() {
   const dm = await p.evaluate(() => { const r = activePrograms().find((x) => x.code === 'BSMAT-DM'); return r.groups.filter((g) => ['core', 'area', 'free'].includes(g.kind)).map((g) => [g.kind, (g.courses || []).length, g.borrowed || null, g.credits || null]); });
   check("BSMAT-DM's core/area/free are BSMAT's own lists (credit targets stay the DM's)", JSON.stringify(dm) === '[["core",2,"BSMAT",9],["area",1,"BSMAT",9],["free",1,"BSMAT",12]]', JSON.stringify(dm));
   const text = (await p.locator('#plan-body').textContent()).replace(/\s+/g, ' ');
-  check('the plan shows the double major with its own credit target', /Graduation needs 65 SU credits/.test(text));
+  check('the plan shows the double major with its own credit target', /Graduation needs 65 SU/.test(text));
 
   // choosing the main programme to clash with the double major
   await p.selectOption('#plan-program', 'BSCS'); await p.waitForTimeout(300);
@@ -433,7 +433,7 @@ async function minorsTest() {
   check('requirements read main programme, double major, then the minors',
     heads.length === 4 && /\(primary\)/.test(heads[0]) && /\(double major\)/.test(heads[1]) && /Philosophy \(minor\)/.test(heads[2]) && /Mathematics \(minor\)/.test(heads[3]), JSON.stringify(heads));
   const planText = (await p.locator('#plan-body').textContent()).replace(/\s+/g, ' ');
-  check('a minor says what it needs', /The minor needs 18 SU credits/.test(planText) && !/Graduation needs 18 SU/.test(planText));
+  check('a minor says what it needs', /The minor needs 18 SU/.test(planText) && !/Graduation needs 18 SU/.test(planText));
 
   // courses in the plan count towards a minor
   await p.evaluate(() => { const plan = planState(); plan.terms = [{ id: '202601', courses: [{ code: 'HUM 207', grade: 'A' }, { code: 'PHIL 300' }, { code: 'PHIL 301' }, { code: 'MATH 201' }] }]; save(); renderPlanner(); });

@@ -8,6 +8,8 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_FULL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const COLORS = 8;
+/** "3 SU | 6 ECTS" — either half is left out when unknown. */
+const creditText = (su, ects) => [su !== null && su !== undefined ? `${su} SU` : '', ects ? `${ects} ECTS` : ''].filter(Boolean).join(' | ');
 const MAX_TERM_CREDITS = 20;     // the most SU credits a student may register for in a term
 const DAY_START = 8 * 60 + 40;
 const DAY_END = 19 * 60 + 40;   // always show the evening slots through 19:30
@@ -1304,15 +1306,16 @@ function renderSummary(pairs) {
   const courses = codes.map((c) => App.idx.byCode.get(c));
   const credits = courses.map((c) => c.credits);
   const stats = [`<span class="stat"><b>${codes.length}</b> course${codes.length === 1 ? '' : 's'}</span>`];
+  const ectsAll = codes.map((c) => ectsOf(c));
+  const ectsTotal = codes.length && ectsAll.every((v) => typeof v === 'number') ? ectsAll.reduce((a, b) => a + b, 0) : null;
   if (codes.length && credits.every((c) => c !== null)) {
     const total = credits.reduce((a, b) => a + b, 0);
+    const label = `<b>${total}</b> SU${ectsTotal !== null ? ` | <b>${ectsTotal}</b> ECTS` : ''}`;
     stats.push(total > MAX_TERM_CREDITS
-      ? `<span class="stat over" title="More than the ${MAX_TERM_CREDITS} SU credits allowed in a term"><b>${total}</b> SU credits</span>`
-      : `<span class="stat"><b>${total}</b> SU credits</span>`);
-  }
-  const ects = codes.map((c) => (courseInfo(c) || {}).ects);
-  if (codes.length && ects.every((v) => typeof v === 'number')) {
-    stats.push(`<span class="stat"><b>${ects.reduce((a, b) => a + b, 0)}</b> ECTS</span>`);
+      ? `<span class="stat over" title="More than the ${MAX_TERM_CREDITS} SU credits allowed in a term">${label}</span>`
+      : `<span class="stat">${label}</span>`);
+  } else if (ectsTotal !== null) {
+    stats.push(`<span class="stat"><b>${ectsTotal}</b> ECTS</span>`);
   }
   const contact = courses.reduce((n, c) => {
     const e = tt().courses[c.code];
@@ -1402,7 +1405,7 @@ function renderCourseList(rawPairs) {
       <div class="course-top">
         <button class="swatch" type="button" data-act="palette" aria-label="Change colour"></button>
         <div class="grow">
-          <div class="course-code">${esc(course.code)}${course.credits !== null ? ` <span class="course-title">${course.credits} cr</span>` : ''}</div>
+          <div class="course-code">${esc(course.code)}${course.credits !== null ? ` <span class="course-title">${esc(creditText(course.credits, ectsOf(course.code)))}</span>` : ''}</div>
           <div class="course-title">${esc(course.title)}</div>
         </div>
         <div class="course-btns">
@@ -1513,7 +1516,7 @@ function renderSearchResults() {
       return `<button type="button" class="res${i === (App.resultIndex || 0) ? ' active' : ''}" data-code="${esc(c.code)}">
         <span class="res-code">${esc(c.code)}</span>
         <span class="res-title">${esc(c.title)}</span>
-        <span class="res-tag${added ? ' added' : ''}">${added ? 'Added' : (c.credits !== null ? `${c.credits} cr` : 'Add')}</span>
+        <span class="res-tag${added ? ' added' : ''}">${added ? 'Added' : (c.credits !== null ? esc(creditText(c.credits, ectsOf(c.code))) : 'Add')}</span>
       </button>`;
     }).join('');
   }
@@ -1566,8 +1569,8 @@ function renderCatalog() {
 function courseDetailHTML(course, { heading = false } = {}) {
   const info = courseInfo(course.code) || {};
   const meta = [];
-  if (course.credits !== null) meta.push(`${course.credits} SU credits`);
-  if (info.ects) meta.push(`${info.ects} ECTS`);
+  const creditMeta = creditText(course.credits, info.ects || ectsOf(course.code));
+  if (creditMeta) meta.push(creditMeta);
   meta.push(({ GR: 'Graduate', UG: 'Undergraduate', PREP: 'Preparatory / language' })[course.level] || course.level);
   if (info.language) meta.push(info.language);
 
@@ -1890,6 +1893,11 @@ function gpaOf(courses) {
   }
   return credits ? { gpa: points / credits, credits } : null;
 }
+
+const courseEcts = (c) => c.ects ?? ectsOf(c.code) ?? 0;
+const earnedEcts = (courses) => courses
+  .filter((c) => PASSING.has(c.grade))
+  .reduce((n, c) => n + courseEcts(c), 0);
 
 const earnedCredits = (courses) => courses
   .filter((c) => PASSING.has(c.grade) && c.credits)
@@ -2244,23 +2252,33 @@ function entrySelectOptions(programCode, selectedEntry) {
 /** One major's requirement grid, with each area expandable to show which of the student's
  * own courses filled it (and what it substituted for, when an override made a slot an
  * either/or). `slot` groups the requirement-progress rows under a stable id for the toggle. */
+function reqAmounts({ group, target, unit, doneCredits, ects, matches, targetCount, withEarned }) {
+  const r = (n) => Math.round(n * 10) / 10;
+  const bits = [];
+  if (target && unit === 'ECTS') bits.push(`${r(doneCredits)}/${target} ECTS${withEarned || ''}`);
+  else {
+    const su = target ? `${r(doneCredits)}/${target} SU${withEarned || ''}` : '';
+    const e = group.ects ? (ects ? `${ects}/${group.ects} ECTS` : '') : (ects ? `${ects} ECTS` : '');
+    const pair = [su, e].filter(Boolean).join(' | ');
+    if (pair) bits.push(pair);
+  }
+  if (targetCount && (group.minCourses || !target)) bits.push(`${matches.length}/${targetCount} courses`);
+  return bits.join(', ');
+}
+
 function requirementBlockHTML(program, slot) {
   const progress = requirementProgress(program);
   return `
     ${program.example ? '<p class="banner" style="margin-bottom:10px">Example programme data — replace data/programs.json with your own.</p>' : ''}
-    ${program.totalCredits ? `<p class="cat-sub">${isMinor(program.code) ? 'The minor needs' : 'Graduation needs'} ${esc(program.totalCredits)} SU credits${program.totalEcts ? ` and ${esc(program.totalEcts)} ECTS` : ''}${program.entry && program.entry !== 'any' ? ` for students who entered in ${esc(termLabel(program.entry))}` : ''}.</p>` : ''}
+    ${program.totalCredits ? `<p class="cat-sub">${isMinor(program.code) ? 'The minor needs' : 'Graduation needs'} ${esc(creditText(program.totalCredits, program.totalEcts))}${program.entry && program.entry !== 'any' ? ` for students who entered in ${esc(termLabel(program.entry))}` : ''}.</p>` : ''}
     ${(program.notes || []).map((n) => `<p class="cat-sub">${esc(n)}</p>`).join('')}
     <div class="req-grid">${progress.map(({ group, matches, doneCredits, earned: got, target, targetCount, missing, ects, unit, rules }, i) => {
-      const parts = [];
-      if (target) parts.push(`${Math.round(doneCredits * 10) / 10}/${target} ${unit || 'cr'}`);
-      if (targetCount && (group.minCourses || !target)) parts.push(`${matches.length}/${targetCount} courses`);
-      if (group.ects && ects) parts.push(`${ects}/${group.ects} ECTS`);
-      const label = parts.join(', ') || `${matches.length} courses`;
+      const label = reqAmounts({ group, target, unit, doneCredits, ects, matches, targetCount }) || `${matches.length} courses`;
       const ratio = target ? Math.min(1, doneCredits / target) : targetCount ? Math.min(1, matches.length / targetCount) : 1;
       const earnedRatio = target ? Math.min(1, got / target) : 0;
       if (group.untracked) {
         return `<button type="button" class="req-card" data-open-req="${esc(slot)}:${i}">
-          <div class="req-top"><b>${esc(group.name)}</b><span>${target ? `${esc(target)} cr needed` : ''}${group.ects ? ` · ${esc(group.ects)} ECTS` : ''}</span></div>
+          <div class="req-top"><b>${esc(group.name)}</b><span>${esc(creditText(target || null, group.ects))}${target || group.ects ? ' needed' : ''}</span></div>
           <p class="req-missing">Which courses count is set per-course (see its syllabus) — not tracked automatically yet.</p>
         </button>`;
       }
@@ -2322,15 +2340,13 @@ function renderRequirementsDialog() {
   const ratio = target ? Math.min(1, doneCredits / target) : targetCount ? Math.min(1, matches.length / targetCount) : 1;
   const earnedRatio = target ? Math.min(1, got / target)
     : targetCount ? Math.min(1, matches.filter((m) => courseStatus(m.code).state === 'taken').length / targetCount) : 0;
-  const parts = [];
-  if (target) parts.push(`${Math.round(doneCredits * 10) / 10}/${target} ${unit || 'cr'} (${Math.round(got * 10) / 10} earned)`);
-  if (targetCount && (group.minCourses || !target)) parts.push(`${matches.length}/${targetCount} courses`);
-  if (group.ects && ects) parts.push(`${ects}/${group.ects} ECTS`);
+  const amounts = reqAmounts({ group, target, unit, doneCredits, ects, matches, targetCount, withEarned: target ? ` (${Math.round(got * 10) / 10} earned)` : '' });
 
   const creditsMap = program.credits || {};
   const creditsBadge = (codes) => {
-    const known = codes.map((c) => (creditsMap[c] || [])[1]).find((v) => v !== undefined) ?? group.creditsEach;   // [ECTS, SU]
-    return known !== undefined ? `${known} SU` : '';
+    const pair = codes.map((c) => creditsMap[c]).find((v) => Array.isArray(v));     // [ECTS, SU]
+    const su = pair && pair[1] !== undefined ? pair[1] : group.creditsEach;
+    return creditText(su === undefined ? null : su, pair ? pair[0] : null);
   };
   const shareKey = group.kind === 'engineering' ? 'eng' : group.kind === 'basicscience' ? 'bs' : null;
   const shareOf = shareKey ? (codes) => `${(courseInfo(codes[0]) || {})[shareKey] || 0} ${shareKey === 'eng' ? 'Eng' : 'BS'} ECTS` : null;
@@ -2360,7 +2376,7 @@ function renderRequirementsDialog() {
 
   if (group.untracked) {
     $('#req-dlg-body').innerHTML = `
-      <p class="cat-sub">${esc(parts.filter((p) => !p.startsWith('0/')).join(', ') || (target ? `${target} cr needed` : ''))}</p>
+      <p class="cat-sub">${esc(amounts || (target ? `${target} ${unit === 'ECTS' ? 'ECTS' : 'SU'} needed` : ''))}</p>
       <p class="empty-note">Sabancı doesn't publish a fixed course list for this one — whether a course
         counts is stated on that course's own syllabus. SUMods can't check that automatically yet, so this
         requirement isn't tracked against your plan; the credit target above is the only thing we know.</p>`;
@@ -2368,7 +2384,7 @@ function renderRequirementsDialog() {
   }
 
   $('#req-dlg-body').innerHTML = `
-    <p class="cat-sub">${esc(parts.join(', ') || `${matches.length} courses`)}</p>
+    <p class="cat-sub">${esc(amounts || `${matches.length} courses`)}</p>
     ${group.note ? `<p class="cat-sub req-note">${esc(group.note)}</p>` : ''}
     ${group.borrowed ? `<p class="cat-sub">This list is the ${esc(group.borrowed)} major's — a separate double-major list isn't published, so the same courses are assumed to count.</p>` : ''}
     <div class="bar req-pool-bar"><span style="width:${Math.round(ratio * 100)}%"></span>
@@ -2397,7 +2413,7 @@ function renderPlanner() {
 
   const stats = [
     overall ? `<span class="stat">CGPA <b>${overall.gpa.toFixed(2)}</b></span>` : '',
-    earned ? `<span class="stat"><b>${earned}</b> SU credits earned</span>` : '',
+    earned ? `<span class="stat"><b>${esc(creditText(earned, earnedEcts(planned)))}</b> earned</span>` : '',
     `<span class="stat"><b>${planned.length}</b> course${planned.length === 1 ? '' : 's'} planned</span>`,
   ].filter(Boolean).join('');
 
@@ -2453,10 +2469,11 @@ function renderPlanner() {
         const courses = term.courses.map(courseFacts);
         const termGpa = gpaOf(courses);
         const credits = courses.reduce((n, c) => n + (c.credits || 0), 0);
+        const termEcts = courses.reduce((n, c) => n + courseEcts(c), 0);
         return `<div class="sem-card" data-term="${esc(term.id)}">
           <div class="sem-head">
             <b>${esc(termLabel(term.id))}</b>
-            <span>${credits ? `${credits} cr` : `${courses.length} course${courses.length === 1 ? '' : 's'}`}${termGpa ? ` · ${termGpa.gpa.toFixed(2)}` : ''}
+            <span>${credits ? esc(creditText(credits, termEcts)) : `${courses.length} course${courses.length === 1 ? '' : 's'}`}${termGpa ? ` · ${termGpa.gpa.toFixed(2)}` : ''}
               <button type="button" class="sem-x" data-drop-term="${esc(term.id)}" aria-label="Remove ${esc(termLabel(term.id))}">✕</button></span>
           </div>
           ${courses.map((course) => {
@@ -2464,7 +2481,7 @@ function renderPlanner() {
             return `<div class="sem-row${issues.length ? ' warn' : ''}">
               <button type="button" class="sem-code" data-open="${esc(course.code)}">${esc(course.code)}</button>
               <span class="sem-title">${esc(course.title)}</span>
-              <span class="sem-cr">${course.credits ?? '—'}</span>
+              <span class="sem-cr">${esc(creditText(course.credits ?? null, courseEcts(course)) || '—')}</span>
               <select class="grade-select" data-grade="${esc(course.code)}" aria-label="Grade for ${esc(course.code)}">
                 ${GRADE_OPTIONS.map((g) => `<option value="${g}"${g === course.grade ? ' selected' : ''}>${g || '–'}</option>`).join('')}
               </select>
@@ -3839,7 +3856,7 @@ async function runFinder() {
     const when = secs.flatMap((s) => s.meetings.map((m) => `${DAYS[m.day]} ${hhmm(m.start)}`)).join(', ');
     return `<div class="fd-row">
       <div class="fd-main"><b>${esc(course.code)}</b> <span>${esc(course.title)}</span>
-        <div class="fd-sub">${course.credits != null ? `${esc(course.credits)} cr · ` : ''}${esc(when || 'no fixed time')} ${how}</div></div>
+        <div class="fd-sub">${course.credits != null ? `${esc(creditText(course.credits, ectsOf(course.code)))} · ` : ''}${esc(when || 'no fixed time')} ${how}</div></div>
       <button type="button" class="btn" data-fd-info="${esc(course.code)}">Info</button>
       <button type="button" class="btn primary" data-fd-add="${i}">Add</button>
     </div>`;
