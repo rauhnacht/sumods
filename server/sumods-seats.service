@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 User=sumods
 WorkingDirectory=/opt/sumods
-ExecStart=/opt/sumods/venv/bin/python server/seats_watcher.py --port 8787 --workers 8
+ExecStart=/opt/sumods/venv/bin/python server/seats_watcher.py --port 8787 --workers 6
 Environment=SEATS_STATE=/var/lib/sumods-seats/watches.json
 StateDirectory=sumods-seats
 Restart=always

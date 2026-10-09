@@ -50,12 +50,15 @@ TOPIC_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 SITE = "https://sumods.com"
 
 lock = threading.Lock()
+BANNER_SLOTS = threading.BoundedSemaphore(6)   # BannerWeb drops connections beyond ~6 at once
+FAIL_PAUSE = 15                                # a CRN that errored waits this long before its next try
 cache: dict[tuple[str, str], dict] = {}      # (term, crn) -> {"row": [...] | None, "at": epoch}
 hot: dict[tuple[str, str], float] = {}       # (term, crn) -> last requested
 watches: dict[str, dict] = {}                # "term:crn" -> {topic: {"label", "since", "armed"}}
 STATE_FILE = Path(os.environ.get("SEATS_STATE", "/var/lib/sumods-seats/watches.json"))
 FAKE = bool(os.environ.get("SUMODS_FAKE"))   # tests: no network
 _session = None
+_last_err_log = [0.0]
 
 
 def session():
@@ -73,10 +76,14 @@ def fetch_row(term: str, crn: str):
         return [30, 30 - n, n, 0, 0, 0]
     from seats import DETAIL_URL, parse_detail
     try:
-        res = session().get(DETAIL_URL.format(term=term, crn=crn), timeout=15)
+        with BANNER_SLOTS:
+            res = session().get(DETAIL_URL.format(term=term, crn=crn), timeout=15)
         parsed = parse_detail(res.text)
     except Exception as exc:  # noqa: BLE001 — keep the loop alive
-        print(f"{term}/{crn}: {exc.__class__.__name__}", flush=True)
+        now = time.time()
+        if now - _last_err_log[0] > 10:      # one line per 10 s, not one per CRN
+            _last_err_log[0] = now
+            print(f"{term}/{crn}: {exc.__class__.__name__} (further errors muted for 10 s)", flush=True)
         return None
     if not parsed:
         return None
@@ -103,7 +110,8 @@ def notify(topic: str, label: str, term: str, crn: str, left: int) -> None:
 def store(term: str, crn: str, row) -> None:
     key = (term, crn)
     with lock:
-        cache[key] = {"row": row if row else cache.get(key, {}).get("row"), "at": time.time(), "ok": bool(row)}
+        cache[key] = {"row": row if row else cache.get(key, {}).get("row"),
+                      "at": time.time() + (0 if row else FAIL_PAUSE), "ok": bool(row)}
         subs = dict(watches.get(f"{term}:{crn}", {}))
     if not row:
         return
@@ -217,7 +225,7 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             for c in crns:
                 hot[(term, c)] = now
-            missing = [c for c in crns if (term, c) not in cache or now - cache[(term, c)]["at"] > 30]
+            missing = [c for c in crns if (term, c) not in cache or 30 < now - cache[(term, c)]["at"] < 3600]
         if missing:   # first look (or a stale one): answer with a fresh read instead of nothing
             with ThreadPoolExecutor(max_workers=len(missing)) as ex:
                 list(ex.map(lambda c: store(term, c, fetch_row(term, c)), missing))
@@ -264,7 +272,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8787)
-    ap.add_argument("--workers", type=int, default=8, help="parallel BannerWeb requests (default 8)")
+    ap.add_argument("--workers", type=int, default=6, help="parallel BannerWeb requests (default 6)")
     args = ap.parse_args()
     load_state()
     threading.Thread(target=poll_loop, args=(args.workers,), daemon=True).start()
