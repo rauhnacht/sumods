@@ -1566,6 +1566,15 @@ function renderCatalog() {
     ? `<button class="btn" id="cat-more" type="button">Show ${Math.min(200, list.length - shown.length)} more</button>` : '');
 }
 
+/** Escapes text and turns course codes ("ACC 301", "MATH201") into buttons that open that course. */
+function linkCodes(text) {
+  return String(text).split(/(\b[A-Z]{2,5}\s?\d{3}[A-Z]?\b)/).map((part, i) => {
+    if (i % 2 === 0) return esc(part);
+    const code = part.replace(/^([A-Z]+)\s?/, '$1 ');
+    return `<button type="button" class="req req-inline${App.idx.byCode.has(code) ? '' : ' req-off'}" data-course="${esc(code)}">${esc(part)}</button>`;
+  }).join('');
+}
+
 function courseDetailHTML(course, { heading = false } = {}) {
   const info = courseInfo(course.code) || {};
   const meta = [];
@@ -1601,7 +1610,7 @@ function courseDetailHTML(course, { heading = false } = {}) {
       : '<p class="detail-desc muted">No description saved for this term yet — the syllabus and catalog pages below have it.</p>'}
     ${offeringHistory(course.code) ? `<p class="detail-extra"><b>Offered</b> ${esc(offeringHistory(course.code))}</p>` : ''}
     ${examHTML}
-    ${extras.map(([label, value]) => `<p class="detail-extra"><b>${esc(label)}</b> ${esc(value)}</p>`).join('')}
+    ${extras.map(([label, value]) => `<p class="detail-extra"><b>${esc(label)}</b> ${/^(Prerequisite|Corequisite)$/.test(label) ? linkCodes(value) : esc(value)}</p>`).join('')}
     ${prereqGraphSVG(course.code)}
     ${workloadHTML(course)}
     <div class="detail-links">${links.join('')}</div>
@@ -4543,6 +4552,13 @@ function bindEvents() {
   }));
   $('#catalog').addEventListener('click', (e) => {
     if (e.target.id === 'cat-more') { App.catalogLimit += 200; renderCatalog(); return; }
+    const link = e.target.closest('.req, .pg-node');
+    if (link && link.dataset.course) {   // a prerequisite / "opens up" chip inside an expanded course
+      const target = link.dataset.course;
+      if (App.idx.byCode.has(target) || (App.union && App.union.has(target)) || courseInfo(target)) openCourseDialog(target);
+      else toast(`${target} isn't in the catalog`);
+      return;
+    }
     const item = e.target.closest('.cat-item');
     if (!item) return;
     const code = item.dataset.code;
