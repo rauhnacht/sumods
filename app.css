@@ -752,3 +752,9 @@ footer a { color: inherit; }
 
 .today-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 11px; color: var(--accent); background: var(--accent-soft); }
 .day-note.makeup { color: var(--accent); }
+
+.quick-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.quick-links .btn { text-decoration: none; }
+#preview-events { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+#preview-events[hidden] { display: none; }
+#set-token { flex: 1 1 180px; min-width: 0; padding: 7px 10px; border: 1px solid var(--line, #8884); border-radius: 8px; background: transparent; color: inherit; font: inherit; }

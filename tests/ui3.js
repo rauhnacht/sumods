@@ -471,6 +471,36 @@ async function minorsTest() {
   return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;
 }
 
+
+/* round 27: custom events in share links, "Check capacity", quick links on Today */
+async function round27Test() {
+  const log = []; const check = (n, ok, x = '') => log.push(`${ok ? 'PASS' : 'FAIL'}  ${n}${x ? ' — ' + x : ''}`);
+  const b = await chromium.launch(launchOptions());
+  const p = await (await b.newContext({ viewport: { width: 1200, height: 800 } })).newPage();
+  const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.goto('file://' + path.resolve(root, 'dist/sumods.html')); await p.waitForSelector('#grid .tt');
+  const r = await p.evaluate(() => {
+    const events = [{ day: 1, start: 600, end: 690, color: 3, title: 'Club, ~meet', place: 'FENS 1' }, { day: 4, start: 840, end: 900, title: 'Gym', place: '' }];
+    const enc = encodeShareEvents(events);
+    const dec = decodeShareEvents(enc);
+    const hash = `#share/202601//e=${enc}`;
+    const parsed = /^#share\/(\d{6})\/([\d.]*)(?:\/e=(.*))?$/.exec(hash);
+    return { dec, parsedOk: !!parsed && decodeShareEvents(parsed[3]).length === 2, bad: decodeShareEvents('9,1,2,3,x,y~1,700,600,0,a,b').length };
+  });
+  check('share-link events survive a round trip (commas, tildes, empty place)', r.dec.length === 2 && r.dec[0].title === 'Club, ~meet' && r.dec[0].place === 'FENS 1' && r.dec[1].day === 4 && r.dec[1].end === 900, JSON.stringify(r.dec));
+  check('a events-only share link (no CRNs) is accepted by the hash pattern', r.parsedOk);
+  check('malformed events in a link are dropped', r.bad === 0, String(r.bad));
+  const link = await p.evaluate(() => { store.prefs.ghToken = 'github_pat_secret'; const c = { ...store, prefs: { ...store.prefs } }; delete c.prefs.ghToken; return JSON.stringify(c).includes('github_pat_secret'); });
+  check('the GitHub token is not part of the backup object', link === false);
+  const cap = await p.evaluate(() => { const c = App.idx.byCode.get('CS 201'); return c ? { seats: !!(App.seats || LIVE_SEATS), live: !!LIVE_SEATS, html: courseDetailHTML(c) } : null; });
+  check('course detail offers "Check capacity" when seats exist without a live worker', !cap || !cap.seats || cap.live || /data-check-seats="[\d ]+"/.test(cap.html), cap && String(cap.seats));
+  await p.evaluate(() => { store.view = 'today'; renderToday(); });
+  check('Today starts with BannerWeb, MySU and SUCourse links', await p.locator('#today-body .quick-links a').count() === 3);
+  console.log(log.join('\n')); console.log('errors:', errs.length ? errs : 'none');
+  await b.close();
+  return log.some((l) => l.startsWith('FAIL')) || errs.length ? 1 : 0;
+}
+
 (async () => {
   const teardown = setup();
   let failed = 0;
@@ -481,6 +511,7 @@ async function minorsTest() {
     failed += await rulesTest();
     failed += await deptRulesTest();
     failed += await todayTest();
+    failed += await round27Test();
   } finally {
     teardown();
   }

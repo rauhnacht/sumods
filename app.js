@@ -325,6 +325,37 @@ function seatBadge(crn) {
   return `<span class="seat ${cls}" title="${s.taken} of ${s.capacity} taken${s.waitRemaining ? `, ${s.waitRemaining} waitlist places` : ''}">${esc(text)}</span>`;
 }
 
+/** "Check capacity": a quick seat pass for one course. Live worker if configured; otherwise
+ * ask GitHub Actions to run update-seats.yml with just these CRNs (needs the owner's token,
+ * kept only in this browser — see Settings). */
+async function checkCapacity(crnText) {
+  const crns = crnText.split(/\s+/).filter(Boolean);
+  if (!crns.length) return;
+  const cfg = window.SUMODS_CONFIG || {};
+  const repo = cfg.githubRepo || 'rauhnacht/sumods';
+  const token = (store.prefs.ghToken || '').trim();
+  if (!repo) { toast('No GitHub repo configured for capacity checks'); return; }
+  if (!token) {
+    await copyText(crns.join(' '));
+    window.open(`https://github.com/${repo}/actions/workflows/update-seats.yml`, '_blank', 'noopener');
+    toast('CRNs copied — paste them into “Run workflow”. Add a GitHub token in Settings to do this with one tap.', { timeout: 7000 });
+    return;
+  }
+  toast('Asking GitHub for fresh numbers…', { timeout: 2500 });
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/update-seats.yml/dispatches`, {
+      method: 'POST',
+      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
+      body: JSON.stringify({ ref: cfg.githubBranch || 'main', inputs: { crns: crns.join(' ') } }),
+    });
+    if (res.status === 204) toast('Started — fresh seats land in about 2–3 minutes (reload then)', { timeout: 6000 });
+    else if (res.status === 401 || res.status === 403 || res.status === 404) toast('GitHub refused the token — it needs Actions: read & write on the repo', { timeout: 7000 });
+    else toast(`GitHub answered ${res.status}`);
+  } catch {
+    toast('Could not reach GitHub');
+  }
+}
+
 function seatsStamp() {
   const lives = Object.values(App.liveSeats || {});
   const time = lives.length ? lives.map((l) => l.at).sort().pop() : App.seats && App.seats.updated;
@@ -1517,7 +1548,8 @@ function renderCatalog() {
   $('#catalog').innerHTML = shown.map((c) => {
     const added = !!entry(c.code);
     const parts = c.components.map((cp) => `${cp.label || cp.code} ×${cp.sections.length}`).join(', ');
-    return `<div class="cat-item" data-code="${esc(c.code)}">
+    const isOpen = App.catOpen === c.code;
+    return `<div class="cat-item${isOpen ? ' open' : ''}" data-code="${esc(c.code)}">
       <button class="cat-head" type="button" data-act="toggle">
         <span class="grow">
           <span class="cat-code">${esc(c.code)}</span> <span class="cat-title">${esc(c.title)}</span>
@@ -1525,7 +1557,7 @@ function renderCatalog() {
         </span>
         <span class="cat-add"><span class="btn ${added ? 'quiet' : ''}" data-act="add">${added ? 'Remove' : 'Add'}</span></span>
       </button>
-      <div class="cat-body"></div>
+      <div class="cat-body">${isOpen ? courseDetailHTML(c) : ''}</div>
     </div>`;
   }).join('') + (list.length > shown.length
     ? `<button class="btn" id="cat-more" type="button">Show ${Math.min(200, list.length - shown.length)} more</button>` : '');
@@ -1570,7 +1602,8 @@ function courseDetailHTML(course, { heading = false } = {}) {
     ${prereqGraphSVG(course.code)}
     ${workloadHTML(course)}
     <div class="detail-links">${links.join('')}</div>
-    ${App.seats || LIVE_SEATS ? `<p class="seat-note">${esc(seatsStamp())}${LIVE_SEATS ? ' <button type="button" class="btn quiet" id="seats-refresh">Refresh seats</button>' : ''}</p>` : ''}
+    ${App.seats || LIVE_SEATS ? `<p class="seat-note">${esc(seatsStamp())}${LIVE_SEATS ? ' <button type="button" class="btn quiet" id="seats-refresh">Refresh seats</button>'
+      : ` <button type="button" class="btn quiet" data-check-seats="${esc(course.components.flatMap((comp) => comp.sections.map((s) => s.crn)).join(' '))}">Check capacity</button>`}</p>` : ''}
     ${course.components.map((comp) => `
     <table class="sec-table">
       <caption>${esc(comp.label || 'Sections')} — ${esc(comp.code)}</caption>
@@ -2910,6 +2943,11 @@ function renderToday() {
   }
 
   host.innerHTML = `
+    <nav class="quick-links" aria-label="Quick links">
+      <a class="btn" href="https://suis.sabanciuniv.edu/prod/twbkwbis.P_WWWLogin" target="_blank" rel="noopener">BannerWeb</a>
+      <a class="btn" href="https://mysu.sabanciuniv.edu" target="_blank" rel="noopener">MySU</a>
+      <a class="btn" href="https://sucourse.sabanciuniv.edu" target="_blank" rel="noopener">SUCourse</a>
+    </nav>
     ${tt().order.length || customEvents().length ? '' : '<p class="empty-note">Add courses in the Timetable tab and your classes show up here, day by day.</p>'}
     ${cards.join('')}
     ${count < 28 ? '<button type="button" class="btn quiet" id="today-more">Show the next 7 days</button>' : ''}`;
@@ -3873,6 +3911,15 @@ function renderSettings() {
         <button type="button" class="btn quiet danger" id="set-reset-all">Reset everything</button>
       </div>
     </section>
+    <section class="set-group">
+      <h3>Capacity check</h3>
+      <p class="cat-sub">Optional. A GitHub fine-grained token (Actions: read &amp; write, this repo only) lets “Check capacity” start a quick seat run in one tap. It stays in this browser and is never exported.</p>
+      <div class="set-actions">
+        <input type="password" id="set-token" placeholder="${p.ghToken ? 'Token saved' : 'github_pat_…'}" autocomplete="off" spellcheck="false">
+        <button type="button" class="btn" id="set-token-save">Save</button>
+        ${p.ghToken ? '<button type="button" class="btn quiet danger" id="set-token-clear">Remove</button>' : ''}
+      </div>
+    </section>
     <p class="cat-sub">SUMods · data from Sabancı's public BannerWeb pages · not affiliated with Sabancı University</p>`;
 }
 
@@ -3891,7 +3938,9 @@ function applySetting(name, value) {
 }
 
 async function exportBackup() {
-  const text = JSON.stringify({ app: 'sumods', version: 1, exported: new Date().toISOString(), store }, null, 1);
+  const clean = { ...store, prefs: { ...store.prefs } };
+  delete clean.prefs.ghToken;   // never leaves the device
+  const text = JSON.stringify({ app: 'sumods', version: 1, exported: new Date().toISOString(), store: clean }, null, 1);
   const result = await saveFile(`sumods-backup-${new Date().toISOString().slice(0, 10)}.json`, text);
   toast(result === 'saved' ? 'Backup downloaded' : 'Could not save the backup here');
 }
@@ -3923,6 +3972,11 @@ function bindSettings() {
     if (option) { applySetting(option.closest('[data-setting]').dataset.setting, option.dataset.value); return; }
     const id = e.target.id;
     if (id === 'set-export') exportBackup();
+    if (id === 'set-token-save') {
+      const v = ($('#set-token').value || '').trim();
+      if (v) { store.prefs.ghToken = v; save(); renderSettings(); toast('Token saved on this device'); }
+    }
+    if (id === 'set-token-clear') { delete store.prefs.ghToken; save(); renderSettings(); toast('Token removed'); }
     if (id === 'set-reshuffle') {
       pushUndo('colours');
       tt().order.forEach((code, i) => { tt().courses[code].color = (i * 3 + Math.floor(Math.random() * COLORS)) % COLORS; });
@@ -4139,11 +4193,32 @@ function render() {
 /* ------------------------------------------------------------ share links */
 
 function parseHash() {
-  const share = /^#share\/(\d{6})\/([\d.]+)$/.exec(location.hash || '');
-  if (share) return { kind: 'share', term: share[1], crns: share[2].split('.').filter(Boolean) };
+  const share = /^#share\/(\d{6})\/([\d.]*)(?:\/e=(.*))?$/.exec(location.hash || '');
+  if (share) return { kind: 'share', term: share[1], crns: share[2].split('.').filter(Boolean), events: decodeShareEvents(share[3]) };
   const course = /^#course\/([A-Za-z]+\d+[A-Za-z]*)(?:\/(\d{6}))?$/.exec(location.hash || '');
   if (course) return { kind: 'course', slug: course[1].toUpperCase(), term: course[2] };
   return null;
+}
+
+/** Custom events travel in the link as day,start,end,color,title,place (each field URI-encoded), joined by "~". */
+function encodeShareEvents(events) {
+  return events.filter((ev) => !ev.hidden).map((ev) =>
+    [ev.day, ev.start, ev.end, ev.color ?? 7, encodeURIComponent(ev.title || 'Event'), encodeURIComponent(ev.place || '')]
+      .join(',').replace(/~/g, '%7E')).join('~');
+}
+
+function decodeShareEvents(raw) {
+  if (!raw) return [];
+  const out = [];
+  raw.split('~').forEach((part, i) => {
+    const f = part.split(',');
+    const day = Number(f[0]), start = Number(f[1]), end = Number(f[2]);
+    if (!(day >= 0 && day <= 5) || !(start >= 0 && end > start && end <= 24 * 60)) return;
+    let title = 'Event', place = '';
+    try { title = decodeURIComponent(f[4] || '') || 'Event'; place = decodeURIComponent(f[5] || ''); } catch { /* malformed */ }
+    out.push({ id: `sh${i}`, title: title.slice(0, 60), day, start, end, place: place.slice(0, 60), color: Math.min(COLORS - 1, Math.max(0, Number(f[3]) || 0)) });
+  });
+  return out;
 }
 
 function openCourseBySlug(slug) {
@@ -4165,6 +4240,9 @@ function startPreview(hash) {
     }
     saved.courses[code].sel[sec.component.type] = crn;
   }
+  if (hash.events && hash.events.length) saved.custom = hash.events;
+  const box = $('#preview-events');
+  if (box) { box.hidden = !(saved.custom && saved.custom.length); $('#preview-events-n').textContent = String((saved.custom || []).length); $('#preview-events-cb').checked = true; }
 }
 
 function endPreview(keep) {
@@ -4172,6 +4250,9 @@ function endPreview(keep) {
   App.preview = null;
   try { history.replaceState(null, '', location.pathname + location.search); } catch { /* sandboxed */ }
   if (keep && preview) {
+    const wantEvents = !$('#preview-events-cb') || $('#preview-events-cb').checked;
+    if (!wantEvents) delete preview.tt.custom;
+    else if (preview.tt.custom) preview.tt.custom = preview.tt.custom.map((ev, i) => ({ ...ev, id: `e${Date.now().toString(36)}${i}` }));
     store.tts[preview.term] = preview.tt;
     save();
     toast('Shared timetable saved');
@@ -4181,8 +4262,9 @@ function endPreview(keep) {
 
 function shareLink() {
   const crns = crnRows().map((r) => r.crn);
-  if (!crns.length) return '';
-  return `${location.origin}${location.pathname}#share/${store.term}/${crns.join('.')}`;
+  const events = customEvents().filter((ev) => !ev.hidden);
+  if (!crns.length && !events.length) return '';
+  return `${location.origin}${location.pathname}#share/${store.term}/${crns.join('.')}${events.length ? `/e=${encodeShareEvents(events)}` : ''}`;
 }
 
 /* ------------------------------------------------------------------ events */
@@ -4402,6 +4484,11 @@ function bindEvents() {
       : 'Could not save the file here — try the deployed site');
   });
 
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-check-seats]');
+    if (b) checkCapacity(b.dataset.checkSeats);
+  });
+
   // preview banner
   $('#preview-banner').addEventListener('click', (e) => {
     if (e.target.id === 'preview-keep') endPreview(true);
@@ -4447,8 +4534,13 @@ function bindEvents() {
       return;
     }
     const body = item.querySelector('.cat-body');
-    if (!item.classList.contains('open')) body.innerHTML = courseDetailHTML(App.idx.byCode.get(code));
-    item.classList.toggle('open');
+    const opening = !item.classList.contains('open');
+    $$('#catalog .cat-item.open').forEach((x) => { x.classList.remove('open'); x.querySelector('.cat-body').innerHTML = ''; });   // one at a time
+    App.catOpen = opening ? code : null;
+    if (opening) {
+      body.innerHTML = courseDetailHTML(App.idx.byCode.get(code));
+      item.classList.add('open');
+    }
   });
 
   $('#regdays').addEventListener('change', (e) => {
@@ -4605,9 +4697,15 @@ function bindEvents() {
   });
 
   let resizeTimer = null;
+  let lastW = window.innerWidth;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { if (store.prefs.orientation === 'auto') render(); }, 180);
+    // phones fire resize when the URL bar collapses while scrolling; only a width change matters
+    resizeTimer = setTimeout(() => {
+      if (window.innerWidth === lastW) return;
+      lastW = window.innerWidth;
+      if (store.prefs.orientation === 'auto') render();
+    }, 180);
   });
 }
 
