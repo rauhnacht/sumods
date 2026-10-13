@@ -1,18 +1,10 @@
 {
  "schema": 1,
- "updated": "2026-10-13T19:15:27Z",
+ "updated": "2026-10-13T23:44:11Z",
  "il": "İstanbul",
  "ilce": "Tuzla",
  "source": "https://www.mgm.gov.tr/tahmin/il-ve-ilceler.aspx?il=İstanbul&ilce=Tuzla",
  "days": [
-  {
-   "date": "2026-10-13",
-   "min": 13,
-   "max": 21,
-   "code": "storm",
-   "text": "Thunderstorms",
-   "event": "GSY"
-  },
   {
    "date": "2026-10-14",
    "min": 14,
