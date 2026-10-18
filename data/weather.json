@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "updated": "2026-10-18T04:28:23Z",
+ "updated": "2026-10-18T12:36:29Z",
  "il": "İstanbul",
  "ilce": "Tuzla",
  "source": "https://www.mgm.gov.tr/tahmin/il-ve-ilceler.aspx?il=İstanbul&ilce=Tuzla",
@@ -16,7 +16,7 @@
   {
    "date": "2026-10-19",
    "min": 12,
-   "max": 19,
+   "max": 18,
    "code": "partly",
    "text": "Partly cloudy",
    "event": "PB"
@@ -24,7 +24,7 @@
   {
    "date": "2026-10-20",
    "min": 12,
-   "max": 22,
+   "max": 20,
    "code": "partly",
    "text": "Partly cloudy",
    "event": "PB"
@@ -32,18 +32,26 @@
   {
    "date": "2026-10-21",
    "min": 11,
-   "max": 20,
+   "max": 21,
    "code": "partly",
-   "text": "Mostly clear",
-   "event": "AB"
+   "text": "Partly cloudy",
+   "event": "PB"
   },
   {
    "date": "2026-10-22",
-   "min": 11,
+   "min": 12,
    "max": 20,
    "code": "partly",
-   "text": "Mostly clear",
-   "event": "AB"
+   "text": "Partly cloudy",
+   "event": "PB"
+  },
+  {
+   "date": "2026-10-23",
+   "min": 12,
+   "max": 20,
+   "code": "storm",
+   "text": "Thunderstorms",
+   "event": "GSY"
   }
  ]
 }
