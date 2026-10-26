@@ -1,18 +1,10 @@
 {
  "schema": 1,
- "updated": "2026-10-26T15:10:53Z",
+ "updated": "2026-10-26T21:01:08Z",
  "il": "İstanbul",
  "ilce": "Tuzla",
  "source": "https://www.mgm.gov.tr/tahmin/il-ve-ilceler.aspx?il=İstanbul&ilce=Tuzla",
  "days": [
-  {
-   "date": "2026-10-26",
-   "min": 13,
-   "max": 21,
-   "code": "partly",
-   "text": "Partly cloudy",
-   "event": "PB"
-  },
   {
    "date": "2026-10-27",
    "min": 13,
