@@ -4,18 +4,18 @@
   {
    "code": "202602",
    "name": "Spring 2026-2027",
-   "updated": "2026-11-04T12:04:47Z",
+   "updated": "2026-11-19T12:58:49Z",
    "courses": 517,
    "sections": 1441,
-   "hash": "433b6296d610"
+   "hash": "45eb98099f09"
   },
   {
    "code": "202601",
    "name": "Fall 2026-2027",
-   "updated": "2026-11-04T12:05:09Z",
+   "updated": "2026-11-19T12:59:09Z",
    "courses": 535,
-   "sections": 1599,
-   "hash": "304771e2dcf6"
+   "sections": 1631,
+   "hash": "129ec32428f3"
   },
   {
    "code": "202503",
