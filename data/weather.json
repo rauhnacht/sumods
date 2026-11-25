@@ -1,18 +1,10 @@
 {
  "schema": 1,
- "updated": "2026-11-24T19:30:07Z",
+ "updated": "2026-11-25T03:32:15Z",
  "il": "İstanbul",
  "ilce": "Tuzla",
  "source": "https://www.mgm.gov.tr/tahmin/il-ve-ilceler.aspx?il=İstanbul&ilce=Tuzla",
  "days": [
-  {
-   "date": "2026-11-24",
-   "min": 7,
-   "max": 10,
-   "code": "rain",
-   "text": "Rain",
-   "event": "Y"
-  },
   {
    "date": "2026-11-25",
    "min": 4,
